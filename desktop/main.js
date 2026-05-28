@@ -83,6 +83,27 @@ autoUpdater.on('update-downloaded', (info) => {
 
 function checkForUpdates(fromUser = false) {
   isManualCheck = fromUser;
+  
+  if (isDev) {
+    if (fromUser && mainWindow) {
+      mainWindow.webContents.send('update-error', 'Update checks are disabled in development mode.');
+    }
+    return;
+  }
+
+  try {
+    const pkg = require('../package.json');
+    const githubPublish = pkg.build?.publish?.find(p => p.provider === 'github');
+    if (githubPublish && githubPublish.owner === 'YOUR_GITHUB_USERNAME') {
+      if (fromUser && mainWindow) {
+        mainWindow.webContents.send('update-error', 'Update repository owner is not configured. Please update "YOUR_GITHUB_USERNAME" in package.json.');
+      }
+      return;
+    }
+  } catch (e) {
+    console.error('Failed to read package.json configuration:', e);
+  }
+
   autoUpdater.checkForUpdates().catch((err) => {
     console.error('Error checking for updates:', err);
     if (fromUser && mainWindow) {
@@ -90,6 +111,7 @@ function checkForUpdates(fromUser = false) {
     }
   });
 }
+
 
 // ── IPC handlers ────────────────────────────────────────────────────────────
 ipcMain.on('check-for-updates', () => checkForUpdates(true));
