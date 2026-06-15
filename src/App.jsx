@@ -2,8 +2,12 @@ import { lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
+import { ThemeProvider } from './context/ThemeContext';
+import { UIProvider } from './context/UIContext';
 import Login from './components/Login';
 import Layout from './components/Layout';
+import Toast from './components/Toast';
+import ConfirmModal from './components/ConfirmModal';
 
 const Inventory      = lazy(() => import('./pages/Inventory'));
 const Billing        = lazy(() => import('./pages/Billing'));
@@ -37,28 +41,34 @@ const ProtectedRoute = ({ children }) => {
 function App() {
   return (
     <Router>
-      <SettingsProvider>
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
-            <Route path="/login" element={<Login />} />
+      <ThemeProvider>
+        <UIProvider>
+          <SettingsProvider>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
+                <Route path="/login" element={<Login />} />
 
-            <Route path="/" element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }>
-              <Route index element={<Navigate to="billing" replace />} />
-              <Route path="inventory" element={<Inventory />} />
-              <Route path="billing" element={<Billing />} />
-              <Route path="sales" element={<SalesHistory />} />
-              <Route path="customers" element={<Customers />} />
-              <Route path="reports" element={<Reports />} />
-              <Route path="purchase-entry" element={<PurchaseHub />} />
-              <Route path="settings" element={<Settings />} />
-            </Route>
-          </Routes>
-        </Suspense>
-      </SettingsProvider>
+                <Route path="/" element={
+                  <ProtectedRoute>
+                    <Layout />
+                  </ProtectedRoute>
+                }>
+                  <Route index element={<Navigate to="billing" replace />} />
+                  <Route path="inventory" element={<Inventory />} />
+                  <Route path="billing" element={<Billing />} />
+                  <Route path="sales" element={<SalesHistory />} />
+                  <Route path="customers" element={<Customers />} />
+                  <Route path="reports" element={<Reports />} />
+                  <Route path="purchase-entry" element={<PurchaseHub />} />
+                  <Route path="settings" element={<Settings />} />
+                </Route>
+              </Routes>
+            </Suspense>
+            <Toast />
+            <ConfirmModal />
+          </SettingsProvider>
+        </UIProvider>
+      </ThemeProvider>
     </Router>
   );
 }

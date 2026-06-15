@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Users, Plus, Edit2, Trash2, KeyRound, Eye, EyeOff, Clock, X, Check, Shield } from 'lucide-react';
 import { API_BASE } from '../../api';
 import { useAuth } from '../../context/AuthContext';
+import { useUI } from '../../context/UIContext';
 
 const inp = { width:'100%', padding:'9px 12px', border:'1px solid var(--border)', borderRadius:8, background:'var(--surface-2)', color:'var(--text)', fontSize:13, outline:'none' };
 const label = { fontSize:12, fontWeight:600, color:'var(--text-muted)', marginBottom:4, display:'block' };
@@ -99,6 +100,7 @@ function UserFormModal({ user, onClose, onSaved }) {
 
 export default function UserSettings() {
   const { user: me } = useAuth();
+  const { confirm } = useUI();
   const [users, setUsers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [tab, setTab] = useState('users');
@@ -112,7 +114,8 @@ export default function UserSettings() {
   useEffect(() => { (async () => { await load(); })(); }, []);
 
   const handleDelete = async (u) => {
-    if (!window.confirm(`Deactivate user "${u.username}"?`)) return;
+    const ok = await confirm(`Deactivate user "${u.username}"? They will lose access immediately.`, { danger: true, title: 'Deactivate User', confirmLabel: 'Deactivate' });
+    if (!ok) return;
     await fetch(`${API_BASE}/api/users/${u.id}`, { method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({requesterId:me?.id}) });
     load();
   };

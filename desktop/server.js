@@ -31,7 +31,7 @@ function getUploadsDir() {
     if (app && app.isPackaged) {
       return path.join(app.getPath('userData'), 'uploads', 'bills');
     }
-  } catch (_e) {
+  } catch {
     // plain node dev
   }
   return path.join(__dirname, 'uploads', 'bills');
@@ -131,25 +131,25 @@ const stmts = {
   getUser: db.prepare('SELECT id, username, role, password FROM users WHERE username = ?'),
 
   // Products
-  getAllProducts:   db.prepare('SELECT * FROM products ORDER BY id DESC'),
-  insertProduct:   db.prepare('INSERT INTO products (name, brand_name, salt_composition, description, price, stock, sku, batch, expiry, mrp, gst, pack_size, item_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-  updateProduct:   db.prepare('UPDATE products SET name = ?, brand_name = ?, salt_composition = ?, description = ?, price = ?, stock = ?, sku = ?, batch = ?, expiry = ?, mrp = ?, gst = ?, pack_size = ?, item_type = ? WHERE id = ?'),
-  deleteProduct:   db.prepare('DELETE FROM products WHERE id = ?'),
+  getAllProducts: db.prepare('SELECT * FROM products ORDER BY id DESC'),
+  insertProduct: db.prepare('INSERT INTO products (name, brand_name, salt_composition, description, price, stock, sku, batch, expiry, mrp, gst, pack_size, item_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  updateProduct: db.prepare('UPDATE products SET name = ?, brand_name = ?, salt_composition = ?, description = ?, price = ?, stock = ?, sku = ?, batch = ?, expiry = ?, mrp = ?, gst = ?, pack_size = ?, item_type = ? WHERE id = ?'),
+  deleteProduct: db.prepare('DELETE FROM products WHERE id = ?'),
   expiringProducts: db.prepare("SELECT * FROM products WHERE expiry IS NOT NULL AND expiry != '' AND expiry >= ? AND expiry <= ? ORDER BY expiry ASC"),
-  expiredProducts:  db.prepare("SELECT * FROM products WHERE expiry IS NOT NULL AND expiry != '' AND expiry < ? ORDER BY expiry ASC"),
+  expiredProducts: db.prepare("SELECT * FROM products WHERE expiry IS NOT NULL AND expiry != '' AND expiry < ? ORDER BY expiry ASC"),
 
   // Customers
   getAllCustomers: db.prepare('SELECT * FROM customers ORDER BY name ASC'),
   insertCustomer: db.prepare('INSERT INTO customers (name, phone, gender, reference_name) VALUES (?, ?, ?, ?)'),
   updateCustomer: db.prepare('UPDATE customers SET name = ?, phone = ?, gender = ?, reference_name = ? WHERE id = ?'),
   deleteCustomer: db.prepare('DELETE FROM customers WHERE id = ?'),
-  getCustomer:    db.prepare('SELECT * FROM customers WHERE id = ?'),
+  getCustomer: db.prepare('SELECT * FROM customers WHERE id = ?'),
 
   // Stats (combined into one query where possible)
-  countProducts:  db.prepare('SELECT COUNT(*) AS count FROM products'),
-  countLowStock:  db.prepare('SELECT COUNT(*) AS count FROM products WHERE stock <= 10'),
+  countProducts: db.prepare('SELECT COUNT(*) AS count FROM products'),
+  countLowStock: db.prepare('SELECT COUNT(*) AS count FROM products WHERE stock <= 10'),
   countCustomers: db.prepare('SELECT COUNT(*) AS count FROM customers'),
-  todaySales:     db.prepare(`
+  todaySales: db.prepare(`
     SELECT 
       COUNT(*) AS count, 
       COALESCE(SUM(total_amount - refunded_amount), 0) AS total,
@@ -172,37 +172,37 @@ const stmts = {
 
   // Customer sales history
   customerSales: db.prepare('SELECT sales.*, users.username FROM sales JOIN users ON sales.user_id = users.id WHERE sales.customer_id = ? ORDER BY sales.created_at DESC'),
-  settleCredit:  db.prepare('UPDATE customers SET credit_balance = MAX(0, credit_balance - ?) WHERE id = ?'),
-  addCredit:     db.prepare('UPDATE customers SET credit_balance = credit_balance + ? WHERE id = ?'),
+  settleCredit: db.prepare('UPDATE customers SET credit_balance = MAX(0, credit_balance - ?) WHERE id = ?'),
+  addCredit: db.prepare('UPDATE customers SET credit_balance = credit_balance + ? WHERE id = ?'),
 
   // Sales
-  insertSale:     db.prepare('INSERT INTO sales (customer_id, prescriber_name, subtotal, gst_total, discount_total, total_amount, payment_status, user_id, payment_details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  insertSale: db.prepare('INSERT INTO sales (customer_id, prescriber_name, subtotal, gst_total, discount_total, total_amount, payment_status, user_id, payment_details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   insertSaleItem: db.prepare('INSERT INTO sale_items (sale_id, product_id, quantity, price, mrp, gst, discount, purchase_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
-  updateStock:    db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?'),
+  updateStock: db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?'),
   restockProduct: db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?'),
   markSaleReturned: db.prepare('UPDATE sales SET is_returned = 1 WHERE id = ?'),
   updateRefundedAmount: db.prepare('UPDATE sales SET refunded_amount = refunded_amount + ? WHERE id = ?'),
   updateReturnedQuantity: db.prepare('UPDATE sale_items SET returned_quantity = returned_quantity + ? WHERE id = ?'),
-  removeCredit:   db.prepare('UPDATE customers SET credit_balance = MAX(0, credit_balance - ?) WHERE id = ?'),
-  getAllSales:     db.prepare('SELECT sales.*, users.username FROM sales JOIN users ON sales.user_id = users.id ORDER BY sales.created_at DESC'),
-  getSale:        db.prepare('SELECT sales.*, customers.name AS customer_name FROM sales LEFT JOIN customers ON sales.customer_id = customers.id WHERE sales.id = ?'),
-  getSaleItems:   db.prepare('SELECT sale_items.*, products.name, products.batch, products.expiry FROM sale_items JOIN products ON sale_items.product_id = products.id WHERE sale_id = ?'),
+  removeCredit: db.prepare('UPDATE customers SET credit_balance = MAX(0, credit_balance - ?) WHERE id = ?'),
+  getAllSales: db.prepare('SELECT sales.*, users.username FROM sales JOIN users ON sales.user_id = users.id ORDER BY sales.created_at DESC'),
+  getSale: db.prepare('SELECT sales.*, customers.name AS customer_name FROM sales LEFT JOIN customers ON sales.customer_id = customers.id WHERE sales.id = ?'),
+  getSaleItems: db.prepare('SELECT sale_items.*, products.name, products.batch, products.expiry FROM sale_items JOIN products ON sale_items.product_id = products.id WHERE sale_id = ?'),
   // Suppliers
   getAllSuppliers: db.prepare('SELECT * FROM suppliers ORDER BY name ASC'),
   insertSupplier: db.prepare('INSERT INTO suppliers (name, phone, email, address, gstin) VALUES (?, ?, ?, ?, ?)'),
   updateSupplier: db.prepare('UPDATE suppliers SET name = ?, phone = ?, email = ?, address = ?, gstin = ? WHERE id = ?'),
   deleteSupplier: db.prepare('DELETE FROM suppliers WHERE id = ?'),
-  getSupplier:    db.prepare('SELECT * FROM suppliers WHERE id = ?'),
+  getSupplier: db.prepare('SELECT * FROM suppliers WHERE id = ?'),
 
   // Purchases
-  insertPurchase:     db.prepare('INSERT INTO purchases (supplier_id, invoice_no, purchase_date, total_amount, gst_total, net_amount, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  insertPurchase: db.prepare('INSERT INTO purchases (supplier_id, invoice_no, purchase_date, total_amount, gst_total, net_amount, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   insertPurchaseItem: db.prepare('INSERT INTO purchase_items (purchase_id, product_id, batch, expiry, quantity, purchase_price, mrp, gst) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
-  addStock:           db.prepare('UPDATE products SET stock = stock + ?, batch = ?, expiry = ?, mrp = ?, purchase_price = ?, price = ? WHERE id = ?'),
-  reduceStock:        db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?'),
-  getAllPurchases:    db.prepare('SELECT purchases.*, suppliers.name AS supplier_name FROM purchases LEFT JOIN suppliers ON purchases.supplier_id = suppliers.id ORDER BY purchases.created_at DESC'),
-  getPurchase:        db.prepare('SELECT purchases.*, suppliers.name AS supplier_name FROM purchases LEFT JOIN suppliers ON purchases.supplier_id = suppliers.id WHERE purchases.id = ?'),
-  getPurchaseItems:   db.prepare('SELECT purchase_items.*, products.name FROM purchase_items JOIN products ON purchase_items.product_id = products.id WHERE purchase_id = ?'),
-  updatePurchase:     db.prepare('UPDATE purchases SET supplier_id = ?, invoice_no = ?, purchase_date = ?, total_amount = ?, gst_total = ?, net_amount = ?, payment_status = ? WHERE id = ?'),
+  addStock: db.prepare('UPDATE products SET stock = stock + ?, batch = ?, expiry = ?, mrp = ?, purchase_price = ?, price = ? WHERE id = ?'),
+  reduceStock: db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?'),
+  getAllPurchases: db.prepare('SELECT purchases.*, suppliers.name AS supplier_name FROM purchases LEFT JOIN suppliers ON purchases.supplier_id = suppliers.id ORDER BY purchases.created_at DESC'),
+  getPurchase: db.prepare('SELECT purchases.*, suppliers.name AS supplier_name FROM purchases LEFT JOIN suppliers ON purchases.supplier_id = suppliers.id WHERE purchases.id = ?'),
+  getPurchaseItems: db.prepare('SELECT purchase_items.*, products.name FROM purchase_items JOIN products ON purchase_items.product_id = products.id WHERE purchase_id = ?'),
+  updatePurchase: db.prepare('UPDATE purchases SET supplier_id = ?, invoice_no = ?, purchase_date = ?, total_amount = ?, gst_total = ?, net_amount = ?, payment_status = ? WHERE id = ?'),
   deletePurchaseItems: db.prepare('DELETE FROM purchase_items WHERE purchase_id = ?'),
 };
 
@@ -210,12 +210,12 @@ const stmts = {
 function buildStats(todayStr) {
   const todaySalesResult = stmts.todaySales.get(todayStr);
   return {
-    totalProducts:  stmts.countProducts.get().count,
-    lowStock:       stmts.countLowStock.get().count,
+    totalProducts: stmts.countProducts.get().count,
+    lowStock: stmts.countLowStock.get().count,
     totalCustomers: stmts.countCustomers.get().count,
-    todaySales:     todaySalesResult.count,
-    todayRevenue:   todaySalesResult.total,
-    todayProfit:    todaySalesResult.profit,
+    todaySales: todaySalesResult.count,
+    todayRevenue: todaySalesResult.total,
+    todayProfit: todaySalesResult.profit,
     totalValuation: stmts.totalValuation.get().total || 0,
     todayPurchases: stmts.todayPurchases.get(todayStr).total || 0,
   };
@@ -235,7 +235,7 @@ app.post('/api/auth/login', (req, res) => {
     );
     const { password: _, ...userData } = user;
     res.json({ user: userData });
-  } catch (_error) {
+  } catch {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -248,9 +248,9 @@ app.get('/api/pos-init', (req, res) => {
     const settingsRows = db.prepare('SELECT key, value FROM settings').all();
     const settings = settingsRows.reduce((acc, row) => { acc[row.key] = row.value; return acc; }, {});
     res.json({
-      products:  stmts.getAllProducts.all(),
+      products: stmts.getAllProducts.all(),
       customers: stmts.getAllCustomers.all(),
-      stats:     buildStats(today),
+      stats: buildStats(today),
       settings,
     });
   } catch (error) {
@@ -324,7 +324,7 @@ app.get('/api/products/expiring', (req, res) => {
     const limitStr = limit.toISOString().slice(0, 7);
     res.json({
       expiring: stmts.expiringProducts.all(todayStr, limitStr),
-      expired:  stmts.expiredProducts.all(todayStr),
+      expired: stmts.expiredProducts.all(todayStr),
     });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -333,22 +333,22 @@ app.get('/api/products/expiring', (req, res) => {
 app.get('/api/search-online', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.json([]);
-  
+
   try {
     const response = await axios.get(`https://pharmeasy.in/api/search/search/?p=1&q=${encodeURIComponent(query)}`, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
-    
+
     const items = response.data?.data?.products || [];
     const formatted = items.map(item => {
       // Extract strength from product name e.g. "Azithromycin 500mg Tablet" → "500mg"
       const strengthMatch = item.name && item.name.match(/(\d+(?:\.\d+)?\s*(?:mg|mcg|ml|g|IU|units?|%)\b)/i);
       const strength = strengthMatch ? strengthMatch[1].replace(/\s+/g, '') : '';
-      
+
       // Build generic name with strength: "AZITHROMYCIN (500mg)"
       const molecule = item.moleculeName || '';
       const generic_name = molecule && strength ? `${molecule} (${strength})` : molecule;
-      
+
       // Format Item Name: "DOLO 650MG TAB 1X15"
       let baseName = item.name || '';
       baseName = baseName.replace(/\s*\([^)]*\)\s*/g, ' '); // remove (Generic Name)
@@ -365,11 +365,13 @@ app.get('/api/search-online', async (req, res) => {
       else if (searchStr.includes('sachet')) form = 'SACHET';
 
       let pack = '';
+      let packSize = 1;
       let qtyMatch = (item.measurementUnit || '').match(/(\d+)\s*(?:Tablet|Capsule|Sachet|Vial)/i);
       if (!qtyMatch) qtyMatch = (item.name || '').match(/(?:Of|Pack of)\s*(\d+)/i);
-      
+
       if (qtyMatch) {
         pack = `1x${qtyMatch[1]}`;
+        packSize = parseInt(qtyMatch[1]) || 1;
       } else if (searchStr.includes('ml')) {
         const mlMatch = searchStr.match(/(\d+)\s*ml/i);
         if (mlMatch) pack = `${mlMatch[1]}ML`;
@@ -385,12 +387,13 @@ app.get('/api/search-online', async (req, res) => {
         brand_name: item.manufacturer || '',
         generic_name,
         mrp: parseFloat(item.mrpDecimal || 0),
+        pack_size: packSize,
         pieces_per_unit: item.measurementUnit || '',
         schedule_category: item.isRxRequired ? 'H' : 'OTC',
         id: item.productId
       };
     });
-    
+
     res.json(formatted);
   } catch (error) {
     console.error('Online search error:', error.message);
@@ -422,7 +425,7 @@ const buildCustomersQuery = (query) => {
   } else if (filter_type === 'recent') {
     having += " AND last_visit_date >= date('now', '-7 days')";
   } else if (filter_type === 'inactive') {
-     having += " AND (last_visit_date < date('now', '-30 days') OR last_visit_date IS NULL)";
+    having += " AND (last_visit_date < date('now', '-30 days') OR last_visit_date IS NULL)";
   }
 
   return { where, having, params };
@@ -543,7 +546,7 @@ app.post('/api/sales', (req, res) => {
         // Fetch current purchase_price if not provided (safety)
         const product = db.prepare('SELECT purchase_price FROM products WHERE id = ?').get(item.product_id);
         const pPrice = item.purchase_price || (product ? product.purchase_price : 0);
-        
+
         stmts.insertSaleItem.run(saleId, item.product_id, item.quantity, item.price, item.mrp || 0, item.gst || 0, item.discount || 0, pPrice);
         stmts.updateStock.run(item.quantity, item.product_id);
       }
@@ -733,14 +736,14 @@ app.get('/api/sales/summary', (req, res) => {
         try {
           const details = JSON.parse(row.payment_details);
           for (const d of details) {
-            if (split.hasOwnProperty(d.method)) split[d.method] += d.amount || 0;
+            if (Object.prototype.hasOwnProperty.call(split, d.method)) split[d.method] += d.amount || 0;
           }
           continue; // skip fallback
         } catch { /* fall through to legacy */ }
       }
       // Legacy: single payment_status
       const mode = row.payment_status === 'paid' ? 'cash' : (row.payment_status || 'cash');
-      if (split.hasOwnProperty(mode)) split[mode] += row.total_amount || 0;
+      if (Object.prototype.hasOwnProperty.call(split, mode)) split[mode] += row.total_amount || 0;
     }
 
     res.json({
@@ -776,7 +779,8 @@ app.get('/api/sales', (req, res) => {
             'price', si.price,
             'discount', si.discount,
             'mrp', si.mrp,
-            'gst', si.gst
+            'gst', si.gst,
+            'purchase_price', si.purchase_price
           ) END
         ) AS items_json
       FROM sales s
@@ -834,7 +838,29 @@ app.delete('/api/suppliers/:id', (req, res) => {
 
 // ─── Purchases ───
 app.get('/api/purchases', (req, res) => {
-  try { res.json(stmts.getAllPurchases.all()); }
+  const { date_from, date_to } = req.query;
+  try {
+    let query = `
+      SELECT purchases.*, suppliers.name AS supplier_name 
+      FROM purchases 
+      LEFT JOIN suppliers ON purchases.supplier_id = suppliers.id
+    `;
+    const params = [];
+    const conditions = [];
+    if (date_from) {
+      conditions.push("date(purchases.purchase_date) >= ?");
+      params.push(date_from);
+    }
+    if (date_to) {
+      conditions.push("date(purchases.purchase_date) <= ?");
+      params.push(date_to);
+    }
+    if (conditions.length > 0) {
+      query += " WHERE " + conditions.join(" AND ");
+    }
+    query += " ORDER BY purchases.created_at DESC";
+    res.json(db.prepare(query).all(...params));
+  }
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -844,21 +870,6 @@ app.get('/api/purchases/:id', (req, res) => {
     const purchase = stmts.getPurchase.get(id);
     if (!purchase) return res.status(404).json({ error: 'Purchase not found' });
     const items = stmts.getPurchaseItems.all(id);
-    res.json({ ...purchase, items });
-  } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-// ─── Purchases ───
-app.get('/api/purchases', (req, res) => {
-  try { res.json(stmts.getAllPurchases.all()); }
-  catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-app.get('/api/purchases/:id', (req, res) => {
-  try {
-    const purchase = stmts.getPurchase.get(req.params.id);
-    if (!purchase) return res.status(404).json({ error: 'Purchase not found' });
-    const items = stmts.getPurchaseItems.all(req.params.id);
     res.json({ ...purchase, items });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -894,12 +905,12 @@ app.put('/api/purchases/:id', (req, res) => {
     const transaction = db.transaction(() => {
       // 1. Fetch old items
       const oldItems = stmts.getPurchaseItems.all(req.params.id);
-      
+
       // 2. Reverse stock for old items
       for (const oldItem of oldItems) {
-         const oldProd = db.prepare('SELECT pack_size FROM products WHERE id = ?').get(oldItem.product_id);
-         const oldPackSize = oldProd ? (oldProd.pack_size || 1) : 1;
-         stmts.reduceStock.run(oldItem.quantity * oldPackSize, oldItem.product_id);
+        const oldProd = db.prepare('SELECT pack_size FROM products WHERE id = ?').get(oldItem.product_id);
+        const oldPackSize = oldProd ? (oldProd.pack_size || 1) : 1;
+        stmts.reduceStock.run(oldItem.quantity * oldPackSize, oldItem.product_id);
       }
 
       // 3. Delete old items
@@ -959,7 +970,7 @@ app.post('/api/purchases/:id/return', (req, res) => {
         'refunded'
       );
       const purchaseId = purchaseResult.lastInsertRowid;
-      
+
       for (const item of items) {
         if (item.return_quantity > 0) {
           const prod = db.prepare('SELECT pack_size FROM products WHERE id = ?').get(item.product_id);
@@ -994,10 +1005,10 @@ app.post('/api/scan-bill', upload.single('billImage'), async (req, res) => {
   try {
     // Run OCR directly on memory buffer
     const { data: { text } } = await tesseract.recognize(req.file.buffer, 'eng');
-    
+
     // Parse text using our custom parser
     const parsedData = parsePharmaInvoice(text);
-    
+
     res.json(parsedData);
   } catch (error) {
     console.error('OCR Error:', error);
@@ -1218,15 +1229,37 @@ app.post('/api/draft-bills/:id/complete', (req, res) => {
     }
 
     // ── All items resolved — create the sale in a transaction ──
-    const subtotal = resolvedItems.reduce((s, i) => s + i.price * i.quantity, 0);
-    const gstTotal = resolvedItems.reduce((s, i) => s + (i.price * i.quantity * (i.gst || 0) / 100), 0);
-    const totalAmount = subtotal + gstTotal;
+    // Use GST-inclusive MRP-based calculation (same as main POS checkout)
+    // sellingPrice = mrp * qty * (1 - disc%/100)  [GST-inclusive final price]
+    // taxableAmt   = sellingPrice / (1 + gst/100)
+    // gstAmt       = sellingPrice - taxableAmt
+    let subtotal = 0, gstTotal = 0, discountTotal = 0;
+    for (const item of resolvedItems) {
+      const packSize = parseInt(item.product.pack_size) || 1;
+      const mrp = Math.round((parseFloat(item.product.mrp || item.product.price || 0) / packSize) * 100) / 100;
+      const qty = parseInt(item.quantity) || 1;
+      const gstPct = parseFloat(item.gst) || 0;
+      const discPct = parseFloat(item.discount_pct) || 0;
+      const grossMrp = mrp * qty;
+      const discAmt = grossMrp * (discPct / 100);
+      const sellingPrice = grossMrp - discAmt;
+      const divisor = 1 + gstPct / 100;
+      const taxableAmt = divisor > 0 ? sellingPrice / divisor : sellingPrice;
+      const gstAmt = sellingPrice - taxableAmt;
+      subtotal += taxableAmt;
+      gstTotal += gstAmt;
+      discountTotal += discAmt;
+      // Store pre-tax unit price on item for insertSaleItem
+      item._unitPrice = divisor > 0 ? (mrp * (1 - discPct / 100)) / divisor : mrp;
+      item._mrp = mrp;
+    }
+    const totalAmount = subtotal + gstTotal; // == sum of sellingPrices
 
     const transaction = db.transaction(() => {
       const saleResult = stmts.insertSale.run(
         draft.customer_id || null,
         draft.prescriber_name || null,
-        subtotal, gstTotal, 0,
+        subtotal, gstTotal, discountTotal,
         totalAmount,
         draft.payment_mode === 'credit' ? 'credit' : 'paid',
         user_id
@@ -1235,7 +1268,8 @@ app.post('/api/draft-bills/:id/complete', (req, res) => {
 
       for (const item of resolvedItems) {
         const pPrice = item.product.purchase_price || 0;
-        stmts.insertSaleItem.run(saleId, item.product_id, item.quantity, item.price, item.mrp || item.price, item.gst || 0, 0, pPrice);
+        const discPct = parseFloat(item.discount_pct) || 0;
+        stmts.insertSaleItem.run(saleId, item.product_id, item.quantity, item._unitPrice, item._mrp, item.gst || 0, discPct, pPrice);
         stmts.updateStock.run(item.quantity, item.product_id);
       }
 
@@ -1253,8 +1287,229 @@ app.post('/api/draft-bills/:id/complete', (req, res) => {
     res.json({ success: true, saleId, totalAmount });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
+// POST AI/Smart Billing Suggestions
+app.post('/api/ai/suggest', async (req, res) => {
+  const { cart } = req.body;
+  if (!cart || !Array.isArray(cart) || cart.length === 0) {
+    return res.json([]);
+  }
 
+  const suggestions = [];
+  const seenProductIds = new Set(cart.map(i => i.product_id));
 
+  // Helper to add suggestion if product exists and is not already in cart / suggested
+  const addSuggestion = (product, type, label, reason) => {
+    if (!product || seenProductIds.has(product.id)) return false;
+    suggestions.push({
+      product,
+      type,
+      label,
+      reason
+    });
+    seenProductIds.add(product.id);
+    return true;
+  };
+
+  try {
+    // 1. TRY OPENAI IF KEY EXISTS
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (openaiKey) {
+      try {
+        const openai = new OpenAI({ apiKey: openaiKey });
+        const cartDescription = cart.map(i =>
+          `- ${i.name} (Salt: ${i.salt_composition || 'None'}, Brand: ${i.brand_name || 'None'}, Price: ₹${i.price}, Category: ${i.category || 'Other'})`
+        ).join('\n');
+
+        const prompt = `You are Pharmiq AI, a clinical pharmacy assistant.
+Based on the current patient shopping cart:
+${cartDescription}
+
+Provide up to 3 clinical suggestions for cross-selling, co-prescribing, or generic substitutions.
+Return the suggestions strictly as a JSON object of this structure:
+{
+  "suggestions": [
+    {
+      "type": "substitute", // or "cross-sell"
+      "targetSearchTerm": "medicine name or salt to search in db",
+      "label": "short suggestion title",
+      "reason": "concise clinical explanation"
+    }
+  ]
+}
+
+Only suggest products that would be relevant to purchase alongside or instead of the cart items. Keep reasons concise.`;
+
+        const response = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          response_format: { type: 'json_object' }
+        });
+
+        const result = JSON.parse(response.choices[0].message.content);
+        if (result && Array.isArray(result.suggestions)) {
+          for (const sug of result.suggestions) {
+            const term = sug.targetSearchTerm;
+            if (!term) continue;
+            // Find a matching product in stock
+            const match = db.prepare(`
+              SELECT * FROM products 
+              WHERE (name LIKE ? OR salt_composition LIKE ? OR brand_name LIKE ?) AND stock > 0
+              LIMIT 1
+            `).get(`%${term}%`, `%${term}%`, `%${term}%`);
+
+            if (match) {
+              addSuggestion(match, sug.type, sug.label, sug.reason);
+            }
+          }
+        }
+      } catch (aiErr) {
+        console.error('[AI Suggestion Error, falling back to local engine]:', aiErr);
+      }
+    }
+
+    // 2. RUN LOCAL ENGINE FALLBACKS (If OpenAI key is missing, or OpenAI failed, or returned < 3 results)
+    if (suggestions.length < 3) {
+      // Helper function for salt equivalence
+      const isSimilarSalt = (salt1, salt2) => {
+        if (!salt1 || !salt2) return false;
+        const s1 = salt1.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+        const s2 = salt2.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+        const ignoreWords = new Set(['mg', 'mcg', 'ml', 'g', '%', 'usp', 'ip', 'bp', 'and', 'with', 'plus', '+']);
+        const words1 = s1.filter(w => !ignoreWords.has(w));
+        const words2 = s2.filter(w => !ignoreWords.has(w));
+        if (words1.length === 0 || words2.length === 0) return false;
+        const set2 = new Set(words2);
+        return words1.every(w => set2.has(w)) && words2.every(w => new Set(words1).has(w));
+      };
+
+      for (const item of cart) {
+        if (suggestions.length >= 3) break;
+
+        // A. GENERIC SUBSTITUTE: Find cheaper alternative with same salt
+        if (item.salt_composition) {
+          const alternatives = db.prepare(`
+            SELECT * FROM products 
+            WHERE id != ? AND stock > 0 AND salt_composition IS NOT NULL AND salt_composition != ''
+          `).all(item.product_id);
+
+          for (const alt of alternatives) {
+            if (isSimilarSalt(item.salt_composition, alt.salt_composition)) {
+              if (alt.mrp < item.mrp || alt.price < item.price) {
+                const savingsPct = Math.round((1 - alt.price / item.price) * 100);
+                if (savingsPct > 5) {
+                  addSuggestion(
+                    alt,
+                    'substitute',
+                    'Generic Substitute',
+                    `Save up to ${savingsPct}% with generic equivalent ${alt.name}.`
+                  );
+                  break; // Only suggest one alternative per cart item
+                }
+              }
+            }
+          }
+        }
+
+        // B. CLINICAL RULE CO-PRESCRIPTIONS
+        const lowerName = (item.name || '').toLowerCase();
+        const lowerSalt = (item.salt_composition || '').toLowerCase();
+
+        // 1) Antibiotics -> PPIs/Probiotics
+        const isAntibiotic = ['amoxicillin', 'clavulanic', 'cefixime', 'azithromycin', 'ofloxacin', 'doxycycline', 'levofloxacin', 'ciprofloxacin', 'cephalexin', 'metronidazole', 'tinidazole', 'cefuroxime', 'cefpodoxime'].some(w => lowerName.includes(w) || lowerSalt.includes(w));
+        if (isAntibiotic) {
+          // Find Pantoprazole or Omeprazole or Esomeprazole
+          const ppi = db.prepare(`
+            SELECT * FROM products 
+            WHERE (name LIKE '%pantoprazole%' OR name LIKE '%omeprazole%' OR name LIKE '%esomeprazole%' OR name LIKE '%pan-d%' OR name LIKE '%aciloc%' OR name LIKE '%ranitidine%') AND stock > 0
+            LIMIT 1
+          `).get();
+          if (ppi) {
+            addSuggestion(ppi, 'cross-sell', 'Consider Antacid', `Commonly co-prescribed with antibiotics to prevent acidity and protect stomach lining.`);
+          }
+          const probiotic = db.prepare(`
+            SELECT * FROM products 
+            WHERE (name LIKE '%probiotic%' OR name LIKE '%sporlac%' OR name LIKE '%lactic acid%') AND stock > 0
+            LIMIT 1
+          `).get();
+          if (probiotic) {
+            addSuggestion(probiotic, 'cross-sell', 'Probiotics', `Maintains gut microflora balance when taking antibiotics.`);
+          }
+        }
+
+        // 2) Painkillers (NSAIDs) -> PPIs
+        const isNSAID = ['paracetamol', 'ibuprofen', 'diclofenac', 'aceclofenac', 'nimesulide', 'naproxen', 'tramadol', 'combiflam', 'dolo'].some(w => lowerName.includes(w) || lowerSalt.includes(w));
+        if (isNSAID) {
+          const ppi = db.prepare(`
+            SELECT * FROM products 
+            WHERE (name LIKE '%pantoprazole%' OR name LIKE '%omeprazole%' OR name LIKE '%ranitidine%' OR name LIKE '%aciloc%') AND stock > 0
+            LIMIT 1
+          `).get();
+          if (ppi) {
+            addSuggestion(ppi, 'cross-sell', 'Stomach Protection', `NSAIDs can cause stomach irritation. An antacid protects the gastric lining.`);
+          }
+        }
+
+        // 3) Vomiting/Diarrhea -> ORS
+        const isGastric = ['loperamide', 'ondansetron', 'domperidone', 'metoclopramide', 'vomikind', 'racecadotril'].some(w => lowerName.includes(w) || lowerSalt.includes(w));
+        if (isGastric) {
+          const ors = db.prepare(`
+            SELECT * FROM products 
+            WHERE (name LIKE '%ors%' OR name LIKE '%electral%' OR name LIKE '%electrolyte%') AND stock > 0
+            LIMIT 1
+          `).get();
+          if (ors) {
+            addSuggestion(ors, 'cross-sell', 'ORS Rehydration', `Recommended to restore hydration and essential electrolytes.`);
+          }
+        }
+
+        // 4) Cough/Cold -> Immunity Booster
+        const isCold = ['cough', 'cold', 'cetirizine', 'levocetirizine', 'montelukast', 'cough syrup', 'phenylephrine'].some(w => lowerName.includes(w) || lowerSalt.includes(w));
+        if (isCold) {
+          const vitC = db.prepare(`
+            SELECT * FROM products 
+            WHERE (name LIKE '%vitamin c%' OR name LIKE '%limcee%' OR name LIKE '%zinc%') AND stock > 0
+            LIMIT 1
+          `).get();
+          if (vitC) {
+            addSuggestion(vitC, 'cross-sell', 'Immunity Boost', `Vitamin C / Zinc supplements help boost immunity for faster recovery.`);
+          }
+        }
+
+        // C. FREQUENTLY BOUGHT TOGETHER (Transactional DB association rules)
+        const dbCrossSells = db.prepare(`
+          SELECT p.*, COUNT(*) as occurrence
+          FROM sale_items si1
+          JOIN sale_items si2 ON si1.sale_id = si2.sale_id
+          JOIN products p ON si2.product_id = p.id
+          WHERE si1.product_id = ? AND si2.product_id != ? AND p.stock > 0
+          GROUP BY si2.product_id
+          ORDER BY occurrence DESC
+          LIMIT 2
+        `).all(item.product_id, item.product_id);
+
+        for (const cs of dbCrossSells) {
+          addSuggestion(cs, 'cross-sell', 'Frequently Bought Together', `Commonly purchased along with ${item.name}.`);
+        }
+      }
+    }
+
+    res.json(suggestions.slice(0, 3));
+  } catch (error) {
+    console.error('Error fetching suggestions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+// Serve production frontend assets if they exist
+const DIST_PATH = path.join(__dirname, '../dist');
+if (fs.existsSync(DIST_PATH)) {
+  app.use(express.static(DIST_PATH));
+  app.get('/{*path}', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      return next();
+    }
+    res.sendFile(path.join(DIST_PATH, 'index.html'));
+  });
+}
 
 // Global Error Handler to prevent HTML responses
 app.use((err, req, res, next) => {

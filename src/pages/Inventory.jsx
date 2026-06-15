@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { API_BASE } from '../api';
+import { useUI } from '../context/UIContext';
 import {
   Package, Plus, Filter, AlertTriangle, CheckCircle,
   Edit2, Trash2, TrendingUp, Box, X, RotateCcw, Camera,
@@ -20,7 +21,7 @@ const calculateExpiryState = (expiryDateStr) => {
     const diffDays = Math.ceil((expDate - today) / (1000 * 60 * 60 * 24));
     if (diffDays < 0) return 'expired';
     if (diffDays <= 90) return 'warning';
-  } catch { }
+  } catch { /* invalid date string — treat as safe */ }
   return 'safe';
 };
 
@@ -28,6 +29,7 @@ const calculateExpiryState = (expiryDateStr) => {
    TAB 1 â€” STOCK VIEW
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 function StockTab() {
+  const { toast, confirm } = useUI();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -71,10 +73,11 @@ function StockTab() {
       await axios.put(`${API_BASE}/api/products/${editMed.id}`, editMed);
       setEditModalOpen(false);
       fetchProducts();
-    } catch (err) { alert('Failed to update: ' + err.message); }
+    } catch (err) { toast('Failed to update: ' + err.message, 'error'); }
   };
   const handleDelete = async (id) => {
-    if (window.confirm('Delete this medicine?')) {
+    const ok = await confirm('Delete this medicine? This cannot be undone.', { danger: true, title: 'Delete Medicine', confirmLabel: 'Delete' });
+    if (ok) {
       await axios.delete(`${API_BASE}/api/products/${id}`);
       fetchProducts();
     }
@@ -313,6 +316,20 @@ function StockTab() {
                      <option value="PL">PL</option>
                    </select>
                  </div>
+                <div>
+                  <label className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2 block">GST Rate (%)</label>
+                  <select
+                    value={editMed.gst ?? 12}
+                    onChange={e => setEditMed({ ...editMed, gst: Number(e.target.value) })}
+                    className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-2xl px-4 py-2.5 text-sm font-bold text-[var(--text)] outline-none focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-400"
+                  >
+                    <option value={0}>0% — Exempt</option>
+                    <option value={5}>5%</option>
+                    <option value={12}>12%</option>
+                    <option value={18}>18%</option>
+                    <option value={28}>28%</option>
+                  </select>
+                </div>
               </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setEditModalOpen(false)} className="flex-1 py-3 text-xs font-black text-[var(--text-muted)] uppercase tracking-widest bg-[var(--surface-2)] hover:bg-[var(--surface-2)] rounded-2xl transition-all">Cancel</button>

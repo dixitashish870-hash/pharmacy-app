@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { API_BASE } from '../api';
 import {
   Package, ShoppingCart, Receipt,
   LogOut, Users, Bell, BarChart2, Sun, Moon, Palette,
   Truck, RefreshCw, Download, Loader, Settings2,
-  AlertCircle, CheckCircle, X
+  AlertCircle, CheckCircle, X, AlertTriangle, Clock,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 
 export default function Layout() {
@@ -18,6 +20,9 @@ export default function Layout() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [activeRipple, setActiveRipple] = useState(null);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [alerts, setAlerts] = useState({ expiring: [], expired: [] });
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(() => localStorage.getItem('sidebar-expanded') === 'true');
 
   const [updateState, setUpdateState] = useState('idle');
   const [showToast, setShowToast]     = useState(false);
@@ -30,6 +35,14 @@ export default function Layout() {
       window.api.getAppVersion().then(setVersion).catch(console.error);
     }
   }, [isElectron]);
+
+  // Fetch expiry alerts on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/products/expiring`)
+      .then(r => r.json())
+      .then(data => setAlerts({ expiring: data.expiring || [], expired: data.expired || [] }))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -57,9 +70,27 @@ export default function Layout() {
     });
     window.api.onUpdateError((err) => {
       setUpdateState('error');
-      setToastMsg({ type: 'error', message: err });
+      
+      // Sanitize the raw error message to make it human-readable
+      let cleanMsg = 'An error occurred while checking for updates.';
+      if (err) {
+        const errStr = typeof err === 'string' ? err : (err.message || err.toString());
+        if (errStr.includes('404')) {
+          cleanMsg = 'No update release found on GitHub (404). Please ensure a release is published on your repository.';
+        } else if (errStr.includes('ENOTFOUND') || errStr.includes('EAI_AGAIN') || errStr.includes('offline')) {
+          cleanMsg = 'Network connection error. Please check your internet connection.';
+        } else if (errStr.includes('Update repository owner is not configured')) {
+          cleanMsg = 'Update repository owner is not configured in package.json.';
+        } else {
+          // Extract first line of error and truncate if too long
+          const firstLine = errStr.split('\n')[0].trim();
+          cleanMsg = firstLine.length > 120 ? firstLine.substring(0, 120) + '...' : firstLine;
+        }
+      }
+
+      setToastMsg({ type: 'error', message: cleanMsg });
       setShowToast(true);
-      setTimeout(() => setShowToast(false), 5000);
+      setTimeout(() => setShowToast(false), 8000); // Give the user more time to read the error
     });
     return () => window.api.removeUpdateListeners?.();
   }, [isElectron]);
@@ -97,7 +128,7 @@ export default function Layout() {
     navigate(href);
   };
 
-  const SIDEBAR_W = 64;
+  const SIDEBAR_W = isSidebarExpanded ? 180 : 64;
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-main)' }}>
@@ -200,10 +231,59 @@ export default function Layout() {
             </button>
           )}
 
-          <button className="icon-btn" style={{ position: 'relative' }}>
-            <Bell size={15} />
-            <span className="dot-badge" />
-          </button>
+          {/* Notifications */}
+          <div style={{ position: 'relative' }}>
+            <button
+              className="icon-btn"
+              style={{ position: 'relative' }}
+              onClick={() => setShowNotifications(v => !v)}
+              title="Expiry Alerts"
+            >
+              <Bell size={15} />
+              {(alerts.expiring.length + alerts.expired.length) > 0 && (
+                <span className="dot-badge" style={{ background: alerts.expired.length > 0 ? '#EF4444' : '#F59E0B' }} />
+              )}
+            </button>
+            {showNotifications && (
+              <div className="notif-dropdown" onClick={e => e.stopPropagation()}>
+                <div className="notif-header">
+                  <Bell size={13} />
+                  <span>Expiry Alerts</span>
+                  <span className="notif-count">{alerts.expiring.length + alerts.expired.length}</span>
+                  <button className="toast-close" style={{ marginLeft: 'auto' }} onClick={() => setShowNotifications(false)}>
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="notif-body">
+                  {alerts.expired.length === 0 && alerts.expiring.length === 0 && (
+                    <div className="notif-empty"><CheckCircle size={24} style={{ color: '#10B981', marginBottom: 6 }} /><div>All clear — no expiry issues!</div></div>
+                  )}
+                  {alerts.expired.length > 0 && (
+                    <div className="notif-section-title" style={{ color: '#EF4444' }}>
+                      <AlertCircle size={11} /> Expired ({alerts.expired.length})
+                    </div>
+                  )}
+                  {alerts.expired.map(p => (
+                    <div key={p.id} className="notif-item expired">
+                      <div className="notif-name">{p.name}</div>
+                      <div className="notif-meta">Batch: {p.batch || 'N/A'} · Exp: {p.expiry}</div>
+                    </div>
+                  ))}
+                  {alerts.expiring.length > 0 && (
+                    <div className="notif-section-title" style={{ color: '#F59E0B' }}>
+                      <Clock size={11} /> Expiring Soon ({alerts.expiring.length})
+                    </div>
+                  )}
+                  {alerts.expiring.map(p => (
+                    <div key={p.id} className="notif-item expiring">
+                      <div className="notif-name">{p.name}</div>
+                      <div className="notif-meta">Batch: {p.batch || 'N/A'} · Exp: {p.expiry}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* User */}
           <div style={{ position: 'relative' }}>
@@ -244,9 +324,22 @@ export default function Layout() {
       </main>
 
       <div
-        className="right-nav"
+        className={`right-nav ${isSidebarExpanded ? 'expanded' : ''}`}
         style={{ width: SIDEBAR_W, background: 'var(--bg-sidebar)' }}
       >
+        {/* Toggle button */}
+        <button
+          className="right-nav-toggle"
+          onClick={() => {
+            const next = !isSidebarExpanded;
+            setIsSidebarExpanded(next);
+            localStorage.setItem('sidebar-expanded', String(next));
+          }}
+          title={isSidebarExpanded ? "Collapse Sidebar" : "Expand Sidebar"}
+        >
+          {isSidebarExpanded ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
+
         {/* Nav items */}
         <div className="right-nav-items">
           {navigation.map(({ name, href, icon: Icon, color }, idx) => { // eslint-disable-line no-unused-vars
@@ -265,6 +358,7 @@ export default function Layout() {
                   {active && <div className="rn-glow" style={{ background: color }} />}
                   <Icon size={19} className="rn-icon" />
                 </div>
+                <span className="rn-label">{name}</span>
               </button>
             );
           })}
@@ -484,6 +578,12 @@ export default function Layout() {
           color: var(--text-muted);
           transition: opacity 250ms ease, max-width 300ms ease, color 180ms;
           overflow: hidden;
+          opacity: 0;
+          max-width: 0;
+        }
+        .right-nav.expanded .rn-label {
+          opacity: 1;
+          max-width: 120px;
         }
         .rn-item.active .rn-label { color: var(--item-color); font-weight: 700; }
         .rn-item:not(.active):hover .rn-label { color: var(--text); }
@@ -538,6 +638,44 @@ export default function Layout() {
           background: var(--surface-2); color: var(--text-muted);
           font-weight: 600; font-size: 12px; border: 1px solid var(--border); cursor: pointer;
         }
+
+        /* ── Notification Dropdown ── */
+        .notif-dropdown {
+          position: absolute; top: calc(100% + 8px); right: 0; width: 300px;
+          background: var(--surface); border: 1px solid var(--border);
+          border-radius: 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+          z-index: 300; overflow: hidden;
+          animation: dropIn 0.2s cubic-bezier(0.34,1.56,0.64,1);
+        }
+        .notif-header {
+          display: flex; align-items: center; gap: 7px;
+          padding: 11px 14px; border-bottom: 1px solid var(--border);
+          font-size: 12px; font-weight: 700; color: var(--text);
+        }
+        .notif-count {
+          font-size: 10px; font-weight: 800; background: var(--danger);
+          color: #fff; border-radius: 99px; padding: 1px 6px;
+        }
+        .notif-body { max-height: 320px; overflow-y: auto; padding: 8px 0; }
+        .notif-empty {
+          display: flex; flex-direction: column; align-items: center;
+          padding: 28px 16px; font-size: 12px; color: var(--text-muted); font-weight: 600;
+        }
+        .notif-section-title {
+          display: flex; align-items: center; gap: 5px;
+          padding: 6px 14px 3px; font-size: 10px; font-weight: 800;
+          text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .notif-item {
+          padding: 8px 14px; border-bottom: 1px solid var(--border);
+          transition: background 120ms;
+        }
+        .notif-item:last-child { border-bottom: none; }
+        .notif-item:hover { background: var(--surface-2); }
+        .notif-item.expired { border-left: 3px solid #EF4444; }
+        .notif-item.expiring { border-left: 3px solid #F59E0B; }
+        .notif-name { font-size: 12px; font-weight: 700; color: var(--text); }
+        .notif-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; font-weight: 600; }
 
         @keyframes spin {
           from { transform: rotate(0deg); }

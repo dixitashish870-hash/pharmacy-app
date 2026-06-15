@@ -13,7 +13,13 @@ const now = () => new Date().toLocaleString('en-IN', { day: '2-digit', month: 's
  *   printMode  — 'thermal' (default, 80mm) | 'a5'
  *   storeInfo  — { name, address, gstin, phone, email, dl_no } (from settings)
  */
-export default function ReceiptPrinter({ sale, printMode = 'thermal', storeInfo = {} }) {
+export default function ReceiptPrinter({ sale, printMode = 'thermal', storeInfo = {}, onMount }) {
+  React.useEffect(() => {
+    if (onMount) {
+      onMount();
+    }
+  }, [onMount]);
+
   if (!sale) return null;
 
   const store = {
@@ -28,7 +34,7 @@ export default function ReceiptPrinter({ sale, printMode = 'thermal', storeInfo 
   const billNo     = String(sale.id || '').padStart(6, '0');
   const billDate   = sale.date || now();
   const items      = sale.items || [];
-  const customer   = sale.customer;
+  const customer   = sale.customer || (sale.customer_name ? { name: sale.customer_name, phone: sale.customer_phone } : null);
   const gstType    = sale.gstType || 'cgst_sgst';
   const totals     = sale.billTotals || {};
 

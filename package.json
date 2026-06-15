@@ -3,7 +3,7 @@
   "description": "Pharmacy Management Desktop App",
   "author": "Pharmiq",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "desktop/main.js",
   "scripts": {
     "dev": "concurrently -k -n VITE,API -c cyan,green \"vite\" \"node desktop/server.js\"",

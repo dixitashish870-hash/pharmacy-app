@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { API_BASE } from '../api';
+import { useUI } from '../context/UIContext';
 import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, MapPin, X } from 'lucide-react';
 
 const inp = {
@@ -11,6 +12,7 @@ const inp = {
 const lbl = { display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' };
 
 export default function Suppliers() {
+  const { toast, confirm } = useUI();
   const [suppliers, setSuppliers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
@@ -39,13 +41,14 @@ export default function Suppliers() {
       setModalOpen(false); setIsEditing(false);
       setCurrentSupplier({ name: '', phone: '', email: '', address: '', gstin: '' });
       fetchSuppliers();
-    } catch (e) { console.error(e); alert('Failed to save supplier'); }
+    } catch (e) { console.error(e); toast('Failed to save supplier', 'error'); }
   };
 
   const handleEdit = (s) => { setCurrentSupplier(s); setIsEditing(true); setModalOpen(true); };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this supplier?')) return;
+    const ok = await confirm('Delete this supplier? This cannot be undone.', { danger: true, title: 'Delete Supplier', confirmLabel: 'Delete' });
+    if (!ok) return;
     try { await axios.delete(`${API_BASE}/api/suppliers/${id}`); fetchSuppliers(); }
     catch (e) { console.error(e); }
   };

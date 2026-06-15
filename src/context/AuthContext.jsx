@@ -1,27 +1,32 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useContext, useState } from 'react';
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Check local storage for existing session
+  const [user, setUser] = useState(() => {
     const storedUser = localStorage.getItem('pharmacy_user');
     if (storedUser) {
       try {
-        setUser(JSON.parse(storedUser));
-      } catch (e) {
+        const parsed = JSON.parse(storedUser);
+        if (parsed.expires_at && Date.now() > parsed.expires_at) {
+          localStorage.removeItem('pharmacy_user');
+          return null;
+        }
+        return parsed;
+      } catch {
         console.error('Failed to parse user session');
+        return null;
       }
     }
-    setLoading(false);
-  }, []);
+    return null;
+  });
+  const [loading] = useState(false);
 
   const login = (userData) => {
-    setUser(userData);
-    localStorage.setItem('pharmacy_user', JSON.stringify(userData));
+    const session = { ...userData, expires_at: Date.now() + 8 * 60 * 60 * 1000 }; // 8hr expiry
+    setUser(session);
+    localStorage.setItem('pharmacy_user', JSON.stringify(session));
   };
 
   const logout = () => {

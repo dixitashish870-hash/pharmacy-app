@@ -4,10 +4,10 @@ import { Banknote, Wifi, CreditCard, IndianRupee, Printer, Check, RefreshCw, Clo
 const fmtIN = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const PAYMENT_MODES = [
-  { id: 'cash',   icon: Banknote,     label: 'Cash',   color: '#10b981' },
-  { id: 'upi',    icon: Wifi,         label: 'UPI',    color: '#6366f1' },
-  { id: 'card',   icon: CreditCard,   label: 'Card',   color: '#3b82f6' },
-  { id: 'credit', icon: IndianRupee,  label: 'Udhaar', color: '#f59e0b' },
+  { id: 'cash',   icon: Banknote,    label: 'Cash',   color: '#10b981' },
+  { id: 'upi',    icon: Wifi,        label: 'UPI',    color: '#6366f1' },
+  { id: 'card',   icon: CreditCard,  label: 'Card',   color: '#3b82f6' },
+  { id: 'credit', icon: IndianRupee, label: 'Udhaar', color: '#f59e0b' },
 ];
 
 export default function BottomBillSummaryPanel({
@@ -18,8 +18,6 @@ export default function BottomBillSummaryPanel({
   totalAmount: totalAmountProp,
   discountAmount,
   itemDiscountTotal,
-  billDiscountAmt,
-  setBillDiscountAmt,
   roundedAmt,
   savingsPct,
   profit,
@@ -32,15 +30,18 @@ export default function BottomBillSummaryPanel({
   selectedCustomer,
   prescriberName,
   warnings,
+  onPrint,
   totalAmount: billTotal,
+  patient,
 }) {
   const [showSlabs, setShowSlabs] = useState(false);
   const itemCount   = cart.length;
   const totalAmount = billTotal || totalAmountProp || 0;
-  const hasCreditSplit = payments.some(p => p.method === 'credit');
   const splitSum = splitMode ? payments.reduce((s, p) => s + (Number(p.amount) || 0), 0) : 0;
   const isSplitUnbalanced = splitMode && Math.abs(splitSum - totalAmount) > 0.01;
-  const isDisabled  = cart.length === 0 || checkoutLoading || isSplitUnbalanced || !selectedCustomer || !prescriberName?.trim();
+  const hasValidPatient = !!selectedCustomer || (!!patient?.name?.trim() && !!patient?.phone?.trim());
+  const rxRequiredButMissing = !!warnings?.scheduleH && !prescriberName?.trim();
+  const isDisabled  = cart.length === 0 || checkoutLoading || isSplitUnbalanced || !hasValidPatient || rxRequiredButMissing;
   const splitRemaining = splitMode && payments.length > 1 ? totalAmount - splitSum : 0;
   const hasWarning  = warnings.expiring > 0 || warnings.scheduleH;
   const isProfit    = profit >= 0;
@@ -225,7 +226,7 @@ export default function BottomBillSummaryPanel({
         </div>
 
         {/* ══ SECTION 4: PAYMENT MODES ══ */}
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 5, padding: '10px 14px', borderLeft: '1px solid rgba(0,0,0,0.07)', borderRight: '1px solid rgba(0,0,0,0.07)', flexShrink: 0, minWidth: splitMode ? 280 : 216 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 5, padding: '10px 14px', borderLeft: '1px solid rgba(0,0,0,0.07)', borderRight: '1px solid rgba(0,0,0,0.07)', flexShrink: 0, minWidth: splitMode ? 280 : 250 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 1 }}>
             <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: '#94a3b8', textTransform: 'uppercase' }}>Payment Mode</span>
             <button
@@ -247,7 +248,7 @@ export default function BottomBillSummaryPanel({
 
           {!splitMode ? (
             /* Single payment mode */
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5, width: 216 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 5, width: 250 }}>
               {PAYMENT_MODES.map((mode) => {
                 const active = payments[0]?.method === mode.id;
                 const IconComponent = mode.icon;
@@ -260,7 +261,7 @@ export default function BottomBillSummaryPanel({
                       border: active ? '1.5px solid transparent' : '1.5px solid var(--border)',
                       background: active ? `linear-gradient(135deg, ${mode.color}ee, ${mode.color})` : 'var(--surface-2)',
                       color: active ? '#fff' : 'var(--text-muted)',
-                      fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                      fontWeight: 700, fontSize: 11, cursor: 'pointer',
                       boxShadow: active ? `0 4px 14px ${mode.color}55` : 'none',
                     }}
                   >
@@ -357,7 +358,7 @@ export default function BottomBillSummaryPanel({
 
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <button onClick={() => window.print()} title="Print Invoice"
+            <button onClick={onPrint} title="Print Invoice"
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 46, height: 46, borderRadius: 13, border: '1.5px solid #e2e8f0', background: '#fff', color: '#64748b', cursor: 'pointer', flexShrink: 0, transition: 'all 0.2s' }}
               onMouseOver={e => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.color = '#6366f1'; }}
               onMouseOut={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.color = '#64748b'; }}

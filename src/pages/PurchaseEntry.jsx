@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { API_BASE } from '../api';
+import { useUI } from '../context/UIContext';
 import {
   ShoppingCart, Plus, Search, Trash2, Camera,
   RotateCcw, CheckCircle, X, ListPlus,
@@ -54,6 +55,7 @@ const DEFAULT_FORM = {
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
+  const { toast } = useUI();
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedSupplier, setSelectedSupplier] = useState('');
@@ -152,10 +154,10 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
 
   // ── Submit ──────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
-    if (!selectedSupplier) return alert('Please select a supplier');
-    if (items.length === 0) return alert('Please add at least one item');
+    if (!selectedSupplier) { toast('Please select a supplier', 'warning'); return; }
+    if (items.length === 0) { toast('Please add at least one item', 'warning'); return; }
     const invalid = items.find(i => !i.product_id || !i.batch || !i.expiry);
-    if (invalid) return alert(`Item "${invalid.name || 'unknown'}" is missing Batch or Expiry.`);
+    if (invalid) { toast(`Item "${invalid.name || 'unknown'}" is missing Batch or Expiry.`, 'warning'); return; }
     setSubmitting(true);
     try {
       const payload = {
@@ -167,18 +169,18 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
 
       if (editingPurchase) {
         await axios.put(`${API_BASE}/api/purchases/${editingPurchase.id}`, payload);
-        alert('Purchase edited successfully!');
+        toast('Purchase edited successfully!', 'success');
         if (onClearEdit) onClearEdit();
       } else {
         await axios.post(`${API_BASE}/api/purchases`, payload);
-        alert('Purchase recorded successfully!');
+        toast('Purchase recorded successfully!', 'success');
       }
 
       setItems([]); setInvoiceNo(''); setSelectedSupplier('');
       await fetchInitialData(); // refresh products list
     } catch (e) {
       console.error(e);
-      alert('Failed to save purchase: ' + (e.response?.data?.error || e.message));
+      toast('Failed to save purchase: ' + (e.response?.data?.error || e.message), 'error');
     } finally { setSubmitting(false); }
   };
 
@@ -217,7 +219,7 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
       setScannedItems(mapped);
       // We don't close the aiModal yet, we'll show the review UI inside it
     } catch (e) {
-      console.error(e); alert('AI Scan failed: ' + e.message);
+      console.error(e); toast('AI Scan failed: ' + e.message, 'error');
     } finally { setScanning(false); }
   };
 
@@ -431,7 +433,7 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
         const pRes = await axios.get(`${API_BASE}/api/products`);
         setProducts(pRes.data);
       } catch (e) {
-        alert('Failed to auto-register new medicine: ' + (e.response?.data?.error || e.message));
+        toast('Failed to auto-register new medicine: ' + (e.response?.data?.error || e.message), 'error');
         return null;
       }
     }

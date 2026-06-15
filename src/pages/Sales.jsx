@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { API_BASE } from '../api';
 import { useNavigate } from 'react-router-dom';
+import { useUI } from '../context/UIContext';
 import { 
   Receipt, Search, ChevronDown, ChevronRight, Printer, 
   RotateCcw, Calendar, CreditCard, Banknote, History,
   Filter, Wallet, ArrowUpRight, CheckCircle2, User, Phone, Zap, RefreshCw,
   X, PackageCheck, AlertTriangle, IndianRupee
 } from 'lucide-react';
-import ReceiptPrinter from '../components/ReceiptPrinter';
+import { printReceipt } from '../utils/printReceipt';
 
 const fmt = (n) => parseFloat(n || 0).toFixed(2);
 
@@ -27,6 +28,7 @@ function ReturnModal({ sale, onClose, onDone }) {
     Object.fromEntries(items.map((_, idx) => [idx, 0]))
   );
   const [loading, setLoading] = useState(false);
+  const { toast, confirm } = useUI();
 
   // remainingQty = sold qty minus already-returned qty
   const remaining = (it) => it.quantity - (it.returned_quantity || 0);
@@ -43,7 +45,8 @@ function ReturnModal({ sale, onClose, onDone }) {
 
   const handlePartialReturn = async () => {
     if (!hasAnyQty) return;
-    if (!window.confirm(`Process refund of ₹${fmt(refundTotal)} for selected items?`)) return;
+    const ok = await confirm(`Process refund of ₹${fmt(refundTotal)} for selected items?`, { title: 'Confirm Partial Return', confirmLabel: 'Process Refund', danger: true });
+    if (!ok) return;
     setLoading(true);
     try {
       const payload = items
@@ -58,26 +61,27 @@ function ReturnModal({ sale, onClose, onDone }) {
           discount: it.discount || 0,
         }));
       await axios.post(`${API_BASE}/api/sales/${sale.id}/partial-return`, { items: payload });
-      alert(`✅ Return processed! Refund: ₹${fmt(refundTotal)}`);
+      toast(`Return processed! Refund: ₹${fmt(refundTotal)}`, 'success', 5000);
       onDone();
       onClose();
     } catch (err) {
-      alert(err.response?.data?.error || 'Return failed. Please try again.');
+      toast(err.response?.data?.error || 'Return failed. Please try again.', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   const handleFullReturn = async () => {
-    if (!window.confirm('Return the ENTIRE bill? All remaining items will be restocked.')) return;
+    const ok = await confirm('Return the ENTIRE bill? All remaining items will be restocked.', { danger: true, title: 'Full Bill Return', confirmLabel: 'Return Full Bill' });
+    if (!ok) return;
     setLoading(true);
     try {
       await axios.post(`${API_BASE}/api/sales/${sale.id}/return`);
-      alert('✅ Full bill returned!');
+      toast('Full bill returned!', 'success', 4000);
       onDone();
       onClose();
     } catch (err) {
-      alert(err.response?.data?.error || 'Return failed');
+      toast(err.response?.data?.error || 'Return failed', 'error');
     } finally {
       setLoading(false);
     }
@@ -251,7 +255,6 @@ export default function SalesHistory() {
   // Interaction State
   const [expandedSale, setExpandedSale] = useState(null);
   const [selectedBill, setSelectedBill] = useState(null); // Triggers Right Panel
-  const [activePrintSale, setActivePrintSale] = useState(null);
   const [returnModalSale, setReturnModalSale] = useState(null); // Triggers Return Modal
   
   // Right Panel State (Customer context)
@@ -264,15 +267,7 @@ export default function SalesHistory() {
     return () => clearTimeout(handler);
   }, [searchTerm]);
 
-  // Fetch data when filters change
-  useEffect(() => {
-    fetchData();
-    // Reset selected bill and expansion when filters change heavily
-    setSelectedBill(null);
-    setExpandedSale(null);
-  }, [debouncedSearch, dateRange, quickFilter, customDates.from, customDates.to]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -316,7 +311,15 @@ export default function SalesHistory() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [debouncedSearch, dateRange, quickFilter, customDates.from, customDates.to]);
+
+  // Fetch data when filters change
+  useEffect(() => {
+    fetchData();
+    // Reset selected bill and expansion when filters change heavily
+    setSelectedBill(null);
+    setExpandedSale(null);
+  }, [fetchData]);
 
   const openReturnModal = (sale, e) => {
     e.stopPropagation();
@@ -330,8 +333,7 @@ export default function SalesHistory() {
   const handlePrint = (sale, e) => {
     e.stopPropagation();
     const items = parseItems(sale.items_json);
-    setActivePrintSale({ ...sale, items });
-    setTimeout(() => window.print(), 100);
+    printReceipt({ ...sale, items });
   };
 
   const handleRepeatSale = (sale, e) => {
@@ -378,18 +380,18 @@ export default function SalesHistory() {
 
   // Rendering Helpers
   const renderPaymentBadge = (mode) => {
-    const m = mode?.toLowerCase();
-    if (m === 'cash') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-green-100 text-green-700 uppercase">Cash</span>;
-    if (m === 'upi') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-700 uppercase">UPI</span>;
-    if (m === 'credit') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-yellow-100 text-yellow-700 uppercase">Credit</span>;
+    if (mode === 'cash') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-green-100 text-green-700 uppercase">Cash</span>;
+    if (mode === 'upi') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-700 uppercase">UPI</span>;
+    if (mode === 'credit') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-yellow-100 text-yellow-700 uppercase">Credit</span>;
+    if (mode === 'card') return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-700 uppercase">Card</span>;
     return <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-gray-100 text-gray-700 uppercase">{mode}</span>;
   };
 
   // Summary logic
   const totSales = summary?.total_sales || 0;
   const cshAmt = summary?.payment_split?.cash || 0;
-  const upiAmt = summary?.payment_split?.upi || 0;
   const crdAmt = summary?.payment_split?.credit || 0;
+  const onlineAmt = (summary?.payment_split?.upi || 0) + (summary?.payment_split?.card || 0);
 
   return (
     <>
@@ -445,8 +447,8 @@ export default function SalesHistory() {
 
           {/* Right: Quick Filters */}
           <div className="flex gap-4 items-center flex-shrink-0">
-             <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-                {['all', 'cash', 'upi', 'credit', 'returns', 'high_value'].map(f => (
+              <div className="flex flex-wrap gap-1 p-1 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                 {['all', 'cash', 'upi', 'card', 'credit', 'returns', 'high_value'].map(f => (
                   <button key={f}
                     onClick={() => setQuickFilter(f)}
                     className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors capitalize ${quickFilter === f ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
@@ -491,7 +493,7 @@ export default function SalesHistory() {
                     <Zap className="w-4 h-4 text-blue-500" />
                     <span className="text-xs font-bold text-gray-500 uppercase">UPI / Online</span>
                   </div>
-                  <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>₹{fmt(upiAmt)}</span>
+                  <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>₹{fmt(onlineAmt)}</span>
                 </div>
                 <div className="flex justify-between items-center w-full">
                   <div className="flex items-center gap-2">
@@ -753,7 +755,6 @@ export default function SalesHistory() {
 
         </div>
       </div>
-      {activePrintSale && <ReceiptPrinter sale={activePrintSale} />}
       {returnModalSale && (
         <ReturnModal 
           sale={returnModalSale} 

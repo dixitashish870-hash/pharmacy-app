@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { API_BASE } from '../api';
 import { useNavigate } from 'react-router-dom';
+import { useUI } from '../context/UIContext';
 import { 
   Users, UserPlus, Search, Phone, History, CreditCard, Clock, 
   MapPin, CheckCircle, AlertTriangle, MessageCircle, FileText, 
@@ -15,6 +16,7 @@ const fmt = (n) => parseFloat(n || 0).toFixed(2);
 
 export default function Customers() {
   const navigate = useNavigate();
+  const { toast } = useUI();
 
   // Filter State
   const [searchTerm, setSearchTerm] = useState('');
@@ -45,9 +47,8 @@ export default function Customers() {
   }, [searchTerm]);
 
   // Fetch data on filter change
-  useEffect(() => {
-    fetchData();
-  }, [debouncedSearch, filterType]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchData(); }, [debouncedSearch, filterType]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -71,11 +72,11 @@ export default function Customers() {
   };
 
   const getStatus = (c) => {
-    if (c.credit_balance > 0) return { label: 'Credit Due', color: 'red' };
-    if (!c.last_visit_date) return { label: 'Inactive', color: 'gray' };
+    if (c.credit_balance > 0) return { label: 'Credit Due', bgClass: 'bg-red-100 text-red-700 border-red-200' };
+    if (!c.last_visit_date) return { label: 'Inactive', bgClass: 'bg-gray-100 text-gray-700 border-gray-200' };
     const daysSince = (new Date() - new Date(c.last_visit_date)) / (1000 * 60 * 60 * 24);
-    if (daysSince <= 30) return { label: 'Active', color: 'green' };
-    return { label: 'Inactive', color: 'gray' };
+    if (daysSince <= 30) return { label: 'Active', bgClass: 'bg-green-100 text-green-700 border-green-200' };
+    return { label: 'Inactive', bgClass: 'bg-gray-100 text-gray-700 border-gray-200' };
   };
 
   const selectCustomer = async (c) => {
@@ -118,24 +119,24 @@ export default function Customers() {
       if (selectedCustomer?.id === editingCustomer?.id) {
          setSelectedCustomer({ ...selectedCustomer, ...formData });
       }
-    } catch (_err) {
-      alert('Failed to save customer');
+    } catch {
+      toast('Failed to save customer', 'error');
     }
   };
 
   const handleSettle = async () => {
-    if (!settleAmount || isNaN(settleAmount) || settleAmount <= 0) return alert('Enter a valid amount');
+    if (!settleAmount || isNaN(settleAmount) || settleAmount <= 0) { toast('Enter a valid amount', 'warning'); return; }
     try {
       const { data } = await axios.post(`${API_BASE}/api/customers/${selectedCustomer.id}/settle`, { amount: parseFloat(settleAmount) });
       setSelectedCustomer({ ...selectedCustomer, credit_balance: data.credit_balance });
       fetchData(); // Refresh list to update credit
       setShowSettleModal(false);
       setSettleAmount('');
-    } catch (_err) { alert('Failed to settle credit'); }
+    } catch { toast('Failed to settle credit', 'error'); }
   };
 
   const handleRepeatLastSale = async () => {
-    if (customerSales.length === 0) return alert('No previous sales found.');
+    if (customerSales.length === 0) { toast('No previous sales found.', 'warning'); return; }
     const lastSale = customerSales[0];
     try {
        // Need to fetch full sale with items manually if it wasn't pre-joined
@@ -154,7 +155,7 @@ export default function Customers() {
        navigate('/billing', { state: { loadBillItems: loadedItems, customer_id: selectedCustomer.id } });
     } catch (e) {
        console.error(e);
-       alert('Failed to load last bill items.');
+       toast('Failed to load last bill items.', 'error');
     }
   };
 
@@ -163,7 +164,7 @@ export default function Customers() {
   };
 
   const sendWhatsAppReminder = () => {
-    if (!selectedCustomer?.phone) return alert('No phone number available.');
+    if (!selectedCustomer?.phone) { toast('No phone number available.', 'warning'); return; }
     const msg = encodeURIComponent(`Hello ${selectedCustomer.name},\nThis is a gentle reminder regarding your pending outstanding balance of ₹${fmt(selectedCustomer.credit_balance)} at the pharmacy. Please clear it at your earliest convenience.\nThank you!`);
     window.open(`https://wa.me/91${selectedCustomer.phone}?text=${msg}`, '_blank');
   };
@@ -282,7 +283,7 @@ export default function Customers() {
                                 ) : <span style={{ color: 'var(--text-light)' }}>-</span>}
                               </td>
                               <td className="px-4 py-3">
-                                <span className={`px-2 py-1 text-[10px] uppercase font-bold rounded-full bg-${status.color}-100 text-${status.color}-700 border border-${status.color}-200`}>
+                                <span className={`px-2 py-1 text-[10px] uppercase font-bold rounded-full border ${status.bgClass}`}>
                                    {status.label}
                                 </span>
                               </td>

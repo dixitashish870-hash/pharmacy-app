@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { API_BASE } from '../api';
+import { useUI } from '../context/UIContext';
 import { Search, RotateCcw, Receipt, Image as ImageIcon, ChevronRight, X } from 'lucide-react';
 
 const fmtAmt = (val) => Number(val || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR' });
 
 export default function PurchaseHistory({ onEditPurchase }) {
+  const { toast } = useUI();
   const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);  // full purchase detail
@@ -39,7 +41,7 @@ export default function PurchaseHistory({ onEditPurchase }) {
       return_quantity: returnQuantities[item.product_id] || 0
     })).filter(i => i.return_quantity > 0);
 
-    if (itemsToReturn.length === 0) return alert('No quantities to return');
+    if (itemsToReturn.length === 0) { toast('No quantities to return', 'warning'); return; }
 
     setReturning(true);
     try {
@@ -49,7 +51,7 @@ export default function PurchaseHistory({ onEditPurchase }) {
       setSelected(null); // Close the detail view to reflect new state
     } catch (e) {
       console.error(e);
-      alert(e.response?.data?.error || 'Failed to process return');
+      toast(e.response?.data?.error || 'Failed to process return', 'error');
     } finally {
       setReturning(false);
     }
