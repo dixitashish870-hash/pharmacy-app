@@ -1387,7 +1387,8 @@ app.post('/api/scan-bill', upload.single('billImage'), async (req, res) => {
 
     if (isPdf) {
       // Parse PDF text
-      const parsedPdf = await pdfParse(req.file.buffer);
+      const instance = new pdfParse.PDFParse({ data: req.file.buffer });
+      const parsedPdf = await instance.getText();
       text = parsedPdf.text || '';
       
       if (text.trim().length < 20) {
