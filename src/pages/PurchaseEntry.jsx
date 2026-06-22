@@ -2,17 +2,18 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import axios from 'axios';
 import { API_BASE } from '../api';
 import { useUI } from '../context/UIContext';
+import SupplierPriceCompareModal from '../components/SupplierPriceCompareModal';
 import {
   ShoppingCart, Plus, Search, Trash2, Camera,
   RotateCcw, CheckCircle, X, ListPlus,
   UploadCloud, FileText, Barcode, AlertTriangle,
   TrendingUp, TrendingDown, Copy, ChevronRight,
-  Package, Tag, Pill, Beaker, Edit3, Hash, Minus, Maximize2
+  Package, Tag, Pill, Beaker, Edit3, Hash, Minus, Maximize2, Scale
 } from 'lucide-react';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const CATEGORIES = ['Ayurvedic', 'Baby Care', 'Baby Drops', 'Baby Food', 'Capsule', 'Contraceptive', 'Cream', 'Eye Drop', 'Feminine Care', 'Injection', 'Ointment', 'OTC', 'Supplements', 'Surgical', 'Surgical Items', 'Syrup', 'Tablet', 'Other'];
+const CATEGORIES = ['Ayurvedic', 'Baby Care', 'Baby Drops', 'Baby Food', 'Capsule', 'Chocolate', 'Contraceptive', 'Cream', 'Eye Drop', 'Feminine Care', 'Injection', 'IV Fluids', 'Medical Device', 'Ointment', 'OTC', 'Supplements', 'Supporter', 'Surgical', 'Surgical Items', 'Syrup', 'Tablet', 'Other'];
 const SCHEDULES = ['OTC', 'H', 'H1', 'X', 'G', 'E'];
 const GST_RATES = ['0', '5', '12', 'other'];
 const QTY_UNITS = ['strip', 'tablet', 'capsule', 'box', 'bottle', 'vial', 'tube', 'sachet', 'piece'];
@@ -26,6 +27,8 @@ const ITEM_TYPES = [
 const CATEGORY_ICONS = {
   Tablet: <Pill size={13} />, Capsule: <Pill size={13} />, Syrup: <Beaker size={13} />,
   Injection: <Beaker size={13} />, OTC: <Package size={13} />, Surgical: <Tag size={13} />,
+  'Medical Device': <Package size={13} />, 'IV Fluids': <Beaker size={13} />,
+  'Chocolate': <Package size={13} />, 'Supporter': <Tag size={13} />,
 };
 
 const STORAGE_CONDITIONS = ['Room Temperature', 'Refrigerated (2–8°C)', 'Deep Freeze (<0°C)'];
@@ -58,6 +61,9 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
   const { toast } = useUI();
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [compareProductId, setCompareProductId] = useState(null);
+  const [compareProductName, setCompareProductName] = useState('');
+  const [drawerBestPrice, setDrawerBestPrice] = useState(null);
   const [selectedSupplier, setSelectedSupplier] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('');
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split('T')[0]);
@@ -91,6 +97,94 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
   const nameInputRef = useRef(null);
 
   useEffect(() => { fetchInitialData(); }, []);
+
+  useEffect(() => {
+    const matched = products.find(p => p.name.toLowerCase() === form.name.trim().toLowerCase());
+    if (matched) {
+      axios.get(`${API_BASE}/api/products/${matched.id}/supplier-prices`)
+        .then(res => {
+          if (res.data && res.data.length > 0) {
+            setDrawerBestPrice(res.data[0]);
+          } else {
+            setDrawerBestPrice(null);
+          }
+        })
+        .catch(err => {
+          console.error(err);
+          setDrawerBestPrice(null);
+        });
+    } else {
+      setDrawerBestPrice(null);
+    }
+  }, [form.name, products]);
+
+  const autoFillFromExisting = useCallback((name) => {
+    if (!name || editingIndex !== null) return;
+
+    // 1. Current draft check
+    const existingInDraft = [...items].reverse().find(it => it.name.toLowerCase() === name.trim().toLowerCase());
+    if (existingInDraft) {
+      setForm({
+        name: existingInDraft.name || '',
+        generic_name: existingInDraft.generic_name || '',
+        category: existingInDraft.category || 'Tablet',
+        schedule_category: existingInDraft.schedule_category || 'OTC',
+        brand_name: existingInDraft.brand_name || '',
+        pieces_per_unit: existingInDraft.pieces_per_unit || '',
+        item_type: existingInDraft.item_type || 'PHARMA',
+        hsn_code: existingInDraft.hsn_code || '',
+        purchase_price: existingInDraft.purchase_price || '',
+        mrp: existingInDraft.mrp || '',
+        selling_price: existingInDraft.selling_price || '',
+        gst: String(existingInDraft.gst || '5'),
+        gst_custom: '',
+        discount: existingInDraft.discount || '0',
+        batch: existingInDraft.batch || '',
+        quantity: existingInDraft.quantity || '',
+        quantity_unit: existingInDraft.quantity_unit || 'strip',
+        mfg_date: existingInDraft.mfg_date || '',
+        expiry: existingInDraft.expiry || '',
+        rack_location: existingInDraft.rack_location || '',
+        reorder_level: existingInDraft.reorder_level || '',
+        reorder_unit: existingInDraft.reorder_unit || 'strip',
+        storage_condition: existingInDraft.storage_condition || 'Room Temperature',
+        barcode: existingInDraft.barcode || '',
+      });
+      toast('Auto-filled details from current bill', 'success');
+      return;
+    }
+
+    // 2. Database history check
+    const matchedProduct = products.find(p => p.name.toLowerCase() === name.trim().toLowerCase());
+    if (matchedProduct) {
+      axios.get(`${API_BASE}/api/products/${matchedProduct.id}/latest-purchase-details`)
+        .then(res => {
+          const latest = res.data;
+          setForm(prev => ({
+            ...prev,
+            name: matchedProduct.name,
+            brand_name: matchedProduct.brand_name || prev.brand_name,
+            generic_name: matchedProduct.salt_composition || prev.generic_name,
+            mrp: latest?.mrp || matchedProduct.mrp || prev.mrp,
+            purchase_price: latest?.purchase_price || matchedProduct.purchase_price || prev.purchase_price,
+            selling_price: matchedProduct.price || prev.selling_price,
+            category: matchedProduct.category || prev.category,
+            gst: String(latest?.gst || matchedProduct.gst || prev.gst || '5'),
+            pieces_per_unit: matchedProduct.pack_size || prev.pieces_per_unit,
+            item_type: matchedProduct.item_type || prev.item_type || 'PHARMA',
+            batch: latest?.batch || prev.batch || '',
+            expiry: latest?.expiry || prev.expiry || '',
+            rack_location: latest?.rack_location || prev.rack_location || '',
+            storage_condition: latest?.storage_condition || prev.storage_condition || 'Room Temperature',
+            barcode: latest?.barcode || matchedProduct.barcode || prev.barcode || '',
+          }));
+          toast('Auto-filled details from past purchase history', 'success');
+        })
+        .catch(err => {
+          console.error(err);
+        });
+    }
+  }, [items, products, editingIndex, toast]);
 
   useEffect(() => {
     if (editingPurchase) {
@@ -756,6 +850,12 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
                       </td>
                       <td className="py-3 px-3">
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {item.product_id && (
+                            <button onClick={() => { setCompareProductId(item.product_id); setCompareProductName(item.name); }}
+                              className="p-1.5 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-all" title="Compare Prices">
+                              <Scale size={14} />
+                            </button>
+                          )}
                           <button onClick={() => openManualModal(idx)}
                             className="p-1.5 text-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Edit">
                             <Edit3 size={14} />
@@ -845,7 +945,14 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
                   <FieldLabel required>Item Name</FieldLabel>
                   <input ref={nameInputRef} type="text" value={form.name}
                     onChange={e => setField('name', e.target.value)}
-                    onBlur={() => setTimeout(() => setShowNameSug(false), 200)}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        setShowNameSug(false);
+                        if (form.name.trim()) {
+                          autoFillFromExisting(form.name.trim());
+                        }
+                      }, 200);
+                    }}
                     onFocus={() => form.name.length > 1 && setShowNameSug(nameSuggestions.length > 0)}
                     placeholder="e.g. DOLO 650 TAB 1×15" className="field-input"
                     style={formErrors.name ? { borderColor: '#F87171', background: 'rgba(239,68,68,0.12)', textTransform: 'uppercase' } : { textTransform: 'uppercase' }} />
@@ -859,19 +966,8 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
                       )}
                       {nameSuggestions.map(p => (
                         <button key={p.id} onMouseDown={() => {
-                          setForm(prev => ({
-                            ...prev,
-                            name: p.name,
-                            brand_name: p.brand_name || prev.brand_name,
-                            generic_name: p.salt_composition || prev.generic_name,
-                            mrp: p.mrp || prev.mrp,
-                            purchase_price: p.purchase_price || prev.purchase_price,
-                            selling_price: p.price || prev.selling_price,
-                            category: p.category || prev.category,
-                            gst: p.gst || prev.gst,
-                            pieces_per_unit: p.pack_size || prev.pieces_per_unit
-                          }));
                           setShowNameSug(false);
+                          autoFillFromExisting(p.name);
                         }}
                           style={{ width: '100%', textAlign: 'left', padding: '10px 12px', fontSize: 13, borderBottom: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text)' }}>
                           <span style={{ fontWeight: 700 }}>{p.name}</span>
@@ -1197,6 +1293,24 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
                     className="field-input font-mono"
                     style={formErrors.purchase_price ? { borderColor: '#F87171', background: 'rgba(239,68,68,0.12)', color: 'var(--text)' } : { color: '#22C55E' }} />
                   {formErrors.purchase_price && <InlineError>{formErrors.purchase_price}</InlineError>}
+                  {drawerBestPrice && (
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#16A34A', marginTop: 5, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span>Best price: ₹{drawerBestPrice.best_price.toFixed(2)} from {drawerBestPrice.supplier_name}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const matched = products.find(p => p.name.toLowerCase() === form.name.trim().toLowerCase());
+                          if (matched) {
+                            setCompareProductId(matched.id);
+                            setCompareProductName(matched.name);
+                          }
+                        }}
+                        style={{ color: '#4F46E5', textDecoration: 'underline', border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontWeight: 800 }}
+                      >
+                        (Compare)
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1244,12 +1358,12 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
                     {/* Gross margin (MRP basis) */}
                     {marginPct !== null && (
                       <div className={`flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl border font-bold text-sm ${mrpError
-                          ? 'bg-red-50 border-red-200 text-red-700'
-                          : marginPct >= 15
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                            : marginPct >= 5
-                              ? 'bg-amber-50 border-amber-200 text-amber-700'
-                              : 'bg-red-50 border-red-200 text-red-700'
+                        ? 'bg-red-50 border-red-200 text-red-700'
+                        : marginPct >= 15
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                          : marginPct >= 5
+                            ? 'bg-amber-50 border-amber-200 text-amber-700'
+                            : 'bg-red-50 border-red-200 text-red-700'
                         }`}>
                         <span className="flex items-center gap-2">
                           {mrpError
@@ -1269,10 +1383,10 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
                     {/* Net margin after discount */}
                     {marginAfterDiscount !== null && discountNum > 0 && (
                       <div className={`flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl border font-bold text-sm ${marginAfterDiscount >= 15
-                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                          : marginAfterDiscount >= 5
-                            ? 'bg-amber-50 border-amber-200 text-amber-700'
-                            : 'bg-red-50 border-red-200 text-red-700'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        : marginAfterDiscount >= 5
+                          ? 'bg-amber-50 border-amber-200 text-amber-700'
+                          : 'bg-red-50 border-red-200 text-red-700'
                         }`}>
                         <span className="flex items-center gap-2">
                           {marginAfterDiscount >= 15
@@ -1365,18 +1479,25 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
               {!aiImage ? (
                 <label className="rounded-2xl p-8 flex flex-col items-center justify-center text-center transition-colors cursor-pointer block" style={{ border: '2px dashed var(--border)', background: 'var(--surface-2)' }}>
                   <UploadCloud size={40} className="text-indigo-400 mb-3" />
-                  <p className="text-sm font-bold" style={{ color: 'var(--text)' }}>Click to upload bill image</p>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Supports JPG, PNG (Max 5MB)</p>
-                  <input type="file" className="hidden" accept="image/*" onChange={e => {
+                  <p className="text-sm font-bold" style={{ color: 'var(--text)' }}>Click to upload bill image or PDF</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Supports JPG, PNG, PDF (Max 5MB)</p>
+                  <input type="file" className="hidden" accept="image/*,application/pdf" onChange={e => {
                     if (e.target.files?.[0]) { setAiImage(URL.createObjectURL(e.target.files[0])); setAiFile(e.target.files[0]); }
                   }} />
                 </label>
               ) : !scannedItems ? (
                 <div className="flex flex-col items-center w-full">
                   <div className="relative w-full h-48 rounded-xl mb-3 overflow-hidden flex items-center justify-center" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
-                    <img src={aiImage} alt="Bill Preview" className="max-h-full object-contain" />
+                    {aiFile && (aiFile.type === 'application/pdf' || aiFile.name.toLowerCase().endsWith('.pdf')) ? (
+                      <div className="flex flex-col items-center gap-2 text-indigo-500">
+                        <FileText size={48} />
+                        <span className="text-sm font-bold text-slate-700 max-w-[80%] truncate">{aiFile.name}</span>
+                      </div>
+                    ) : (
+                      <img src={aiImage} alt="Bill Preview" className="max-h-full object-contain" />
+                    )}
                   </div>
-                  <button onClick={() => setAiImage(null)} className="text-xs font-bold mb-4 underline" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }} disabled={scanning}>Upload a different image</button>
+                  <button onClick={() => { setAiImage(null); setAiFile(null); }} className="text-xs font-bold mb-4 underline" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }} disabled={scanning}>Upload a different file</button>
                   <button className="w-full flex items-center justify-center gap-2 px-5 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm shadow-indigo-600/20 transition-all border border-indigo-500 disabled:opacity-75 disabled:cursor-not-allowed"
                     disabled={scanning} onClick={handleAiScan}>
                     {scanning ? <RotateCcw size={16} className="animate-spin" /> : <Camera size={16} />}
@@ -1464,6 +1585,18 @@ export default function PurchaseEntry({ editingPurchase, onClearEdit }) {
             </div>
           </div>
         </div>
+      )}
+
+      {compareProductId && (
+        <SupplierPriceCompareModal
+          productId={compareProductId}
+          productName={compareProductName}
+          products={products}
+          onClose={() => {
+            setCompareProductId(null);
+            setCompareProductName('');
+          }}
+        />
       )}
 
       <style>{`

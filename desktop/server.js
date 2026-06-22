@@ -10,6 +10,7 @@ const tesseract = require('tesseract.js');
 const { parsePharmaInvoice } = require('./invoiceParser');
 const axios = require('axios');
 require('dotenv').config();
+const pdfParse = require('pdf-parse');
 
 // ─── bcrypt helper ───
 const SALT_ROUNDS = 10;
@@ -1378,19 +1379,35 @@ app.post('/api/purchases/:id/bill', uploadBill.single('billImage'), (req, res) =
 
 // ─── AI Bill Scan ───
 app.post('/api/scan-bill', upload.single('billImage'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No image provided' });
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
   try {
-    // Run OCR directly on memory buffer
-    const { data: { text } } = await tesseract.recognize(req.file.buffer, 'eng');
+    let text = '';
+    const isPdf = req.file.mimetype === 'application/pdf' || req.file.originalname.toLowerCase().endsWith('.pdf');
+
+    if (isPdf) {
+      // Parse PDF text
+      const parsedPdf = await pdfParse(req.file.buffer);
+      text = parsedPdf.text || '';
+      
+      if (text.trim().length < 20) {
+        return res.status(400).json({
+          error: 'The uploaded PDF contains no selectable text (scanned PDF). Please upload a digital PDF, or upload a JPG/PNG image to run OCR.'
+        });
+      }
+    } else {
+      // Run OCR directly on memory buffer
+      const { data: { text: ocrText } } = await tesseract.recognize(req.file.buffer, 'eng');
+      text = ocrText;
+    }
 
     // Parse text using our custom parser
     const parsedData = parsePharmaInvoice(text);
 
     res.json(parsedData);
   } catch (error) {
-    console.error('OCR Error:', error);
-    res.status(500).json({ error: 'Failed to process invoice image.' });
+    console.error('Scan Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to process invoice file.' });
   }
 });
 
