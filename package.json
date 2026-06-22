@@ -3,10 +3,10 @@
   "description": "Pharmacy Management Desktop App",
   "author": "Pharmiq",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.3",
   "main": "desktop/main.js",
   "scripts": {
-    "dev": "concurrently -k -n VITE,API -c cyan,green \"vite\" \"node desktop/server.js\"",
+    "dev": "concurrently -k -n VITE,API -c cyan,green \"vite --open\" \"node desktop/server.js\"",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -44,7 +44,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Pharmiq",
-      "uninstallDisplayName": "Pharmiq - Pharmacy Management"
+      "uninstallDisplayName": "Pharmiq - Pharmacy Management",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "files": [
       "dist/**/*",
