@@ -1,20 +1,32 @@
 const electron = require('electron');
 const path = require('path');
-const https = require('https');
-const { app, BrowserWindow, ipcMain, shell, Notification, dialog } = electron;
+const { app, BrowserWindow, ipcMain, Notification } = electron;
 const { autoUpdater } = require('electron-updater');
+const { initConnectivity } = require('./connectivity');
 const isDev = !app?.isPackaged;
 
 // ── Backend server ──────────────────────────────────────────────────────────
 const { spawn } = require('child_process');
+let userDataPath = '';
+try {
+  userDataPath = app.getPath('userData');
+} catch (e) {
+  console.error('Failed to get userData path:', e);
+}
+
 let serverProcess = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  env: { 
+    ...process.env, 
+    ELECTRON_RUN_AS_NODE: '1',
+    USER_DATA_PATH: userDataPath
+  },
   stdio: 'inherit'
 });
 app.on('will-quit', () => { if (serverProcess) serverProcess.kill(); });
 
 // ── Auto Update Helper ───────────────────────────────────────────────────────
 autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
 
 let mainWindow;
 let isManualCheck = false;
@@ -34,7 +46,7 @@ autoUpdater.on('update-available', (info) => {
   }
 });
 
-autoUpdater.on('update-not-available', (info) => {
+autoUpdater.on('update-not-available', () => {
   console.log('Update not available.');
   if (mainWindow) {
     mainWindow.webContents.send('update-downloaded', {
@@ -63,22 +75,7 @@ autoUpdater.on('update-downloaded', (info) => {
     });
   }
   isManualCheck = false;
-
-  // Show a dialog/notification to the user with a Restart Now button
-  dialog.showMessageBox(mainWindow, {
-    type: 'info',
-    title: 'Update Available',
-    message: 'A new update is available. Restart to apply.',
-    buttons: ['Restart Now', 'Later'],
-    defaultId: 0,
-    cancelId: 1
-  }).then((result) => {
-    if (result.response === 0) {
-      autoUpdater.quitAndInstall();
-    }
-  }).catch((err) => {
-    console.error('Error showing update message box:', err);
-  });
+  // Bell notification in the renderer handles the UI — no native dialog needed.
 });
 
 function checkForUpdates(fromUser = false) {
@@ -149,7 +146,10 @@ function createWindow() {
 // Poll every 30 minutes
 setInterval(() => checkForUpdates(false), 30 * 60 * 1000);
 
-app.on('ready', createWindow);
+app.on('ready', () => {
+  createWindow();
+  initConnectivity();
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (mainWindow === null) createWindow(); });
 

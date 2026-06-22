@@ -1,5 +1,3 @@
-/* eslint-disable no-undef */
-/* eslint-env node */
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
@@ -7,6 +5,11 @@ const fs = require('fs');
 // Resolve DB path: use writable userData dir in production (packaged .asar),
 // fall back to repo root in development.
 function getDbPath() {
+  if (process.env.USER_DATA_PATH) {
+    const userDataPath = process.env.USER_DATA_PATH;
+    if (!fs.existsSync(userDataPath)) fs.mkdirSync(userDataPath, { recursive: true });
+    return path.join(userDataPath, 'pharmacy.db');
+  }
   try {
     // electron is available in the main process
     const { app } = require('electron');
@@ -144,6 +147,63 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  -- ── Attendance Module ──────────────────────────────────────────────────────
+
+  -- Staff profiles (extends users; can also exist without a login account)
+  CREATE TABLE IF NOT EXISTS staff (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER UNIQUE,
+    name TEXT NOT NULL,
+    phone TEXT,
+    designation TEXT,
+    shift TEXT DEFAULT 'general',
+    biometric_id INTEGER UNIQUE,
+    joining_date TEXT,
+    monthly_salary REAL DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  -- Raw punch log received from biometric device or manual entry
+  CREATE TABLE IF NOT EXISTS attendance_punches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staff_id INTEGER NOT NULL,
+    biometric_id INTEGER,
+    punch_time DATETIME NOT NULL,
+    punch_type TEXT DEFAULT 'auto',
+    device_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(staff_id) REFERENCES staff(id)
+  );
+
+  -- Processed daily attendance (computed from punches)
+  CREATE TABLE IF NOT EXISTS attendance_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staff_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    check_in DATETIME,
+    check_out DATETIME,
+    work_minutes INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'absent',
+    overtime_minutes INTEGER DEFAULT 0,
+    notes TEXT,
+    UNIQUE(staff_id, date),
+    FOREIGN KEY(staff_id) REFERENCES staff(id)
+  );
+
+  -- Leave requests
+  CREATE TABLE IF NOT EXISTS leave_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staff_id INTEGER NOT NULL,
+    from_date TEXT NOT NULL,
+    to_date TEXT NOT NULL,
+    reason TEXT,
+    status TEXT DEFAULT 'pending',
+    approved_by INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(staff_id) REFERENCES staff(id)
+  );
+
   -- Performance Indexes
   CREATE INDEX IF NOT EXISTS idx_products_stock ON products(stock);
   CREATE INDEX IF NOT EXISTS idx_products_expiry ON products(expiry);
@@ -152,6 +212,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(name);
   CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(purchase_date);
   CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id);
+  CREATE INDEX IF NOT EXISTS idx_attendance_records_date ON attendance_records(date);
+  CREATE INDEX IF NOT EXISTS idx_attendance_records_staff ON attendance_records(staff_id);
+  CREATE INDEX IF NOT EXISTS idx_attendance_punches_staff ON attendance_punches(staff_id);
+  CREATE INDEX IF NOT EXISTS idx_leave_requests_staff ON leave_requests(staff_id);
 `);
 
 // Migrate existing DB schemas gracefully

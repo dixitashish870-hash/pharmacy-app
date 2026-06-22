@@ -26,6 +26,9 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // Resolve uploads dir: writable userData in production, local in dev
 function getUploadsDir() {
+  if (process.env.USER_DATA_PATH) {
+    return path.join(process.env.USER_DATA_PATH, 'uploads', 'bills');
+  }
   try {
     const { app } = require('electron');
     if (app && app.isPackaged) {
@@ -83,6 +86,14 @@ const runMigrations = () => {
     db.prepare("ALTER TABLE products ADD COLUMN item_type TEXT DEFAULT 'PHARMA'").run();
     console.log('[Migration] Added item_type column to products table');
   }
+  if (!productCols.includes('hsn_code')) {
+    db.prepare("ALTER TABLE products ADD COLUMN hsn_code TEXT DEFAULT '30049099'").run();
+    console.log('[Migration] Added hsn_code column to products table');
+  }
+  if (!productCols.includes('discount')) {
+    db.prepare('ALTER TABLE products ADD COLUMN discount REAL DEFAULT 0').run();
+    console.log('[Migration] Added discount column to products table');
+  }
 
   const customerInfo = db.prepare("PRAGMA table_info(customers)").all();
   const customerCols = customerInfo.map(c => c.name);
@@ -119,6 +130,21 @@ const runMigrations = () => {
       estimated_total REAL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  // stock_adjustments table for logging physical audits and stock corrections
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS stock_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      previous_stock INTEGER NOT NULL,
+      adjusted_stock INTEGER NOT NULL,
+      difference INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(product_id) REFERENCES products(id)
     )
   `).run();
 };
@@ -185,8 +211,8 @@ const stmts = {
   updateReturnedQuantity: db.prepare('UPDATE sale_items SET returned_quantity = returned_quantity + ? WHERE id = ?'),
   removeCredit: db.prepare('UPDATE customers SET credit_balance = MAX(0, credit_balance - ?) WHERE id = ?'),
   getAllSales: db.prepare('SELECT sales.*, users.username FROM sales JOIN users ON sales.user_id = users.id ORDER BY sales.created_at DESC'),
-  getSale: db.prepare('SELECT sales.*, customers.name AS customer_name FROM sales LEFT JOIN customers ON sales.customer_id = customers.id WHERE sales.id = ?'),
-  getSaleItems: db.prepare('SELECT sale_items.*, products.name, products.batch, products.expiry FROM sale_items JOIN products ON sale_items.product_id = products.id WHERE sale_id = ?'),
+  getSale: db.prepare('SELECT sales.*, customers.name AS customer_name, customers.phone AS customer_phone, customers.gender AS customer_gender, customers.reference_name AS customer_reference_name, users.username FROM sales LEFT JOIN customers ON sales.customer_id = customers.id JOIN users ON sales.user_id = users.id WHERE sales.id = ?'),
+  getSaleItems: db.prepare('SELECT sale_items.*, products.name, products.batch, products.expiry, products.salt_composition, products.brand_name, products.item_type FROM sale_items JOIN products ON sale_items.product_id = products.id WHERE sale_id = ?'),
   // Suppliers
   getAllSuppliers: db.prepare('SELECT * FROM suppliers ORDER BY name ASC'),
   insertSupplier: db.prepare('INSERT INTO suppliers (name, phone, email, address, gstin) VALUES (?, ?, ?, ?, ?)'),
@@ -197,13 +223,71 @@ const stmts = {
   // Purchases
   insertPurchase: db.prepare('INSERT INTO purchases (supplier_id, invoice_no, purchase_date, total_amount, gst_total, net_amount, payment_status) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   insertPurchaseItem: db.prepare('INSERT INTO purchase_items (purchase_id, product_id, batch, expiry, quantity, purchase_price, mrp, gst) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
-  addStock: db.prepare('UPDATE products SET stock = stock + ?, batch = ?, expiry = ?, mrp = ?, purchase_price = ?, price = ? WHERE id = ?'),
+  addStock: db.prepare('UPDATE products SET stock = stock + ?, batch = ?, expiry = ?, mrp = ?, purchase_price = ?, price = ?, discount = ? WHERE id = ?'),
   reduceStock: db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?'),
   getAllPurchases: db.prepare('SELECT purchases.*, suppliers.name AS supplier_name FROM purchases LEFT JOIN suppliers ON purchases.supplier_id = suppliers.id ORDER BY purchases.created_at DESC'),
   getPurchase: db.prepare('SELECT purchases.*, suppliers.name AS supplier_name FROM purchases LEFT JOIN suppliers ON purchases.supplier_id = suppliers.id WHERE purchases.id = ?'),
   getPurchaseItems: db.prepare('SELECT purchase_items.*, products.name FROM purchase_items JOIN products ON purchase_items.product_id = products.id WHERE purchase_id = ?'),
   updatePurchase: db.prepare('UPDATE purchases SET supplier_id = ?, invoice_no = ?, purchase_date = ?, total_amount = ?, gst_total = ?, net_amount = ?, payment_status = ? WHERE id = ?'),
   deletePurchaseItems: db.prepare('DELETE FROM purchase_items WHERE purchase_id = ?'),
+  getProductSupplierPrices: db.prepare(`
+    WITH supplier_purchases AS (
+      SELECT 
+        pur.supplier_id,
+        s.name AS supplier_name,
+        s.phone AS supplier_phone,
+        pi.purchase_price,
+        pur.purchase_date,
+        ROW_NUMBER() OVER (PARTITION BY pur.supplier_id ORDER BY pur.purchase_date DESC, pur.id DESC) as rn
+      FROM purchase_items pi
+      JOIN purchases pur ON pi.purchase_id = pur.id
+      JOIN suppliers s ON pur.supplier_id = s.id
+      WHERE pi.product_id = ?
+    ),
+    supplier_stats AS (
+      SELECT 
+        pur.supplier_id,
+        MIN(pi.purchase_price) AS best_price,
+        COUNT(*) AS purchase_count,
+        MAX(pur.purchase_date) AS last_purchase_date
+      FROM purchase_items pi
+      JOIN purchases pur ON pi.purchase_id = pur.id
+      WHERE pi.product_id = ?
+      GROUP BY pur.supplier_id
+    )
+    SELECT 
+      ss.supplier_id,
+      sp.supplier_name,
+      sp.supplier_phone,
+      ss.best_price,
+      sp.purchase_price AS last_price,
+      ss.last_purchase_date,
+      ss.purchase_count
+    FROM supplier_stats ss
+    JOIN supplier_purchases sp ON ss.supplier_id = sp.supplier_id AND sp.rn = 1
+    ORDER BY ss.best_price ASC
+  `),
+  getLatestPurchaseDetails: db.prepare(`
+    SELECT 
+      pi.batch,
+      pi.expiry,
+      pi.purchase_price,
+      pi.mrp,
+      pi.gst
+    FROM purchase_items pi
+    JOIN purchases pur ON pi.purchase_id = pur.id
+    WHERE pi.product_id = ?
+    ORDER BY pur.purchase_date DESC, pur.id DESC
+    LIMIT 1
+  `),
+  insertStockAdjustment: db.prepare('INSERT INTO stock_adjustments (product_id, previous_stock, adjusted_stock, difference, reason, notes) VALUES (?, ?, ?, ?, ?, ?)'),
+  getStockAdjustments: db.prepare(`
+    SELECT sa.*, p.name AS product_name, p.sku, p.batch, p.brand_name
+    FROM stock_adjustments sa
+    JOIN products p ON sa.product_id = p.id
+    ORDER BY sa.created_at DESC
+    LIMIT 50
+  `),
 };
 
 // ─── Helper: build stats object ───
@@ -238,6 +322,102 @@ app.post('/api/auth/login', (req, res) => {
   } catch {
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// Change password (self-service)
+app.put('/api/auth/change-password', (req, res) => {
+  const { userId, currentPassword, newPassword } = req.body;
+  if (!userId || !currentPassword || !newPassword) return res.status(400).json({ error: 'All fields required' });
+  if (newPassword.length < 4) return res.status(400).json({ error: 'New password must be at least 4 characters' });
+  try {
+    const user = db.prepare('SELECT id, password FROM users WHERE id = ?').get(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!verifyPassword(currentPassword, user.password)) return res.status(401).json({ error: 'Current password is incorrect' });
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(newPassword), userId);
+    res.json({ success: true });
+  } catch { res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// ___ User Management ___
+
+app.get('/api/users', (req, res) => {
+  try {
+    const users = db.prepare('SELECT id, username, role, is_active, permissions FROM users ORDER BY id ASC').all();
+    res.json(users);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/users/login-log', (req, res) => {
+  const limit = parseInt(req.query.limit || '50', 10);
+  try {
+    const logs = db.prepare('SELECT * FROM login_logs ORDER BY created_at DESC LIMIT ?').all(limit);
+    res.json(logs);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/users', (req, res) => {
+  const { username, password, role, permissions, is_active } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  if (password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
+  try {
+    const hashed = hashPassword(password);
+    const permsJson = permissions ? JSON.stringify(permissions) : null;
+    const result = db.prepare(
+      'INSERT INTO users (username, password, role, permissions, is_active) VALUES (?, ?, ?, ?, ?)'
+    ).run(username.trim(), hashed, role || 'billing', permsJson, is_active != null ? is_active : 1);
+    res.json({ id: result.lastInsertRowid, username: username.trim(), role: role || 'billing', is_active: is_active != null ? is_active : 1 });
+  } catch (error) {
+    if (error.message.includes('UNIQUE')) return res.status(409).json({ error: 'Username already exists' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/users/:id', (req, res) => {
+  const { id } = req.params;
+  const { username, role, permissions, is_active } = req.body;
+  try {
+    const permsJson = permissions ? JSON.stringify(permissions) : null;
+    db.prepare('UPDATE users SET username = ?, role = ?, permissions = ?, is_active = ? WHERE id = ?')
+      .run(username, role, permsJson, is_active != null ? is_active : 1, id);
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message.includes('UNIQUE')) return res.status(409).json({ error: 'Username already exists' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/users/:id/password', (req, res) => {
+  const { id } = req.params;
+  const { password } = req.body;
+  if (!password || password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
+  try {
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(password), id);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.put('/api/users/:id/status', (req, res) => {
+  const { id } = req.params;
+  const { is_active } = req.body;
+  try {
+    db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(is_active ? 1 : 0, id);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/users/:id', (req, res) => {
+  const { id } = req.params;
+  const { requesterId } = req.body || {};
+  if (String(requesterId) === String(id)) return res.status(400).json({ error: 'You cannot delete your own account' });
+  try {
+    const salesCount = db.prepare('SELECT COUNT(*) AS count FROM sales WHERE user_id = ?').get(id);
+    if (salesCount && salesCount.count > 0) {
+      db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(id);
+      return res.json({ success: true, deactivated: true, message: 'User deactivated (has sales records)' });
+    }
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // ─── POS Init (combined single-request bootstrap for Billing page) ───
@@ -287,6 +467,59 @@ app.delete('/api/products/:id', (req, res) => {
   catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// ─── Stock Adjustments & Verification ───
+app.post('/api/products/:id/adjust-stock', (req, res) => {
+  const { id } = req.params;
+  const { adjusted_stock, reason, notes } = req.body;
+
+  if (adjusted_stock == null || !reason) {
+    return res.status(400).json({ error: 'adjusted_stock and reason are required' });
+  }
+
+  const newStock = parseInt(adjusted_stock, 10);
+  if (isNaN(newStock) || newStock < 0) {
+    return res.status(400).json({ error: 'Invalid adjusted_stock value' });
+  }
+
+  try {
+    const product = db.prepare('SELECT stock FROM products WHERE id = ?').get(id);
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const previousStock = product.stock;
+    const difference = newStock - previousStock;
+
+    const executeAdjustment = db.transaction(() => {
+      db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(newStock, id);
+      stmts.insertStockAdjustment.run(
+        Number(id),
+        previousStock,
+        newStock,
+        difference,
+        reason,
+        notes || ''
+      );
+    });
+
+    executeAdjustment();
+
+    const updatedProduct = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
+    res.json(updatedProduct);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/stock-adjustments', (req, res) => {
+  try {
+    const adjustments = stmts.getStockAdjustments.all();
+    res.json(adjustments);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── Quick-add product (for manual purchase entry items not yet in DB) ───
 app.post('/api/products/quick', (req, res) => {
   const { name, brand_name, salt_composition, category, mrp, purchase_price, gst, pack_size, item_type } = req.body;
@@ -312,6 +545,28 @@ app.post('/api/products/quick', (req, res) => {
     );
     res.json({ id: result.lastInsertRowid, name, sku });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ─── Supplier Price Comparison ───
+app.get('/api/products/:id/supplier-prices', (req, res) => {
+  const { id } = req.params;
+  try {
+    const prices = stmts.getProductSupplierPrices.all(id, id);
+    res.json(prices);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Latest Purchase Details (Autofill) ───
+app.get('/api/products/:id/latest-purchase-details', (req, res) => {
+  const { id } = req.params;
+  try {
+    const details = stmts.getLatestPurchaseDetails.get(id);
+    res.json(details || null);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ─── Expiry Alerts ───
@@ -513,6 +768,29 @@ app.post('/api/customers/:id/settle', (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// ─── Low Stock Register (with last supplier name) ───
+app.get('/api/products/low-stock', (req, res) => {
+  try {
+    const threshold = parseInt(req.query.threshold || '10', 10);
+    const rows = db.prepare(`
+      SELECT
+        p.*,
+        COALESCE(sup.name, 'Unknown / Not Purchased') AS supplier_name,
+        COALESCE(sup.phone, '') AS supplier_phone,
+        COALESCE(sup.gstin, '') AS supplier_gstin,
+        MAX(pur.purchase_date) AS last_purchase_date
+      FROM products p
+      LEFT JOIN purchase_items pi ON pi.product_id = p.id
+      LEFT JOIN purchases pur ON pur.id = pi.purchase_id
+      LEFT JOIN suppliers sup ON sup.id = pur.supplier_id
+      WHERE p.stock <= ?
+      GROUP BY p.id
+      ORDER BY p.stock ASC, p.name ASC
+    `).all(threshold);
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 // ─── Stats ───
 app.get('/api/stats', (req, res) => {
   try {
@@ -521,7 +799,107 @@ app.get('/api/stats', (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// ─── Sales ───
+// ─── GST Report (GSTR-1 output + GSTR-2 ITC) ───
+app.get('/api/gst-report', (req, res) => {
+  try {
+    const { date_from, date_to } = req.query;
+
+    // Build date filters
+    let salesWhere = "WHERE s.is_returned = 0";
+    let purchaseWhere = "WHERE 1=1";
+    const sParams = [];
+    const pParams = [];
+    if (date_from) { salesWhere += " AND DATE(s.created_at) >= ?"; sParams.push(date_from); purchaseWhere += " AND pur.purchase_date >= ?"; pParams.push(date_from); }
+    if (date_to) { salesWhere += " AND DATE(s.created_at) <= ?"; sParams.push(date_to); purchaseWhere += " AND pur.purchase_date <= ?"; pParams.push(date_to); }
+
+    // GSTR-1: HSN + GST slab wise outward supply
+    const outputRows = db.prepare(`
+      SELECT
+        COALESCE(p.hsn_code, '30049099') AS hsn_code,
+        COALESCE(si.gst, 0) AS gst_rate,
+        ROUND(SUM(si.price * si.quantity * (1.0 - COALESCE(si.discount, 0) / 100.0)), 2) AS taxable_value,
+        COUNT(DISTINCT s.id) AS invoice_count
+      FROM sales s
+      JOIN sale_items si ON s.id = si.sale_id
+      LEFT JOIN products p ON si.product_id = p.id
+      ${salesWhere}
+      GROUP BY COALESCE(p.hsn_code, '30049099'), COALESCE(si.gst, 0)
+      ORDER BY gst_rate, hsn_code
+    `).all(...sParams);
+
+    // GSTR-2: Purchase ITC
+    const itcRows = db.prepare(`
+      SELECT
+        COALESCE(sup.name, 'Unknown Supplier') AS supplier_name,
+        COALESCE(sup.gstin, '') AS supplier_gstin,
+        pur.invoice_no,
+        pur.purchase_date,
+        COALESCE(pi.gst, 0) AS gst_rate,
+        ROUND(SUM(pi.purchase_price * pi.quantity), 2) AS taxable_value,
+        ROUND(SUM(pi.purchase_price * pi.quantity * COALESCE(pi.gst, 0) / 100.0), 2) AS gst_amount
+      FROM purchases pur
+      LEFT JOIN purchase_items pi ON pur.id = pi.purchase_id
+      LEFT JOIN suppliers sup ON pur.supplier_id = sup.id
+      ${purchaseWhere}
+      GROUP BY pur.id, COALESCE(pi.gst, 0)
+      ORDER BY pur.purchase_date DESC
+    `).all(...pParams);
+
+    // Monthly trend: last 12 months output vs ITC
+    const monthlyOutput = db.prepare(`
+      SELECT strftime('%Y-%m', s.created_at) AS month, ROUND(SUM(s.gst_total), 2) AS output_tax
+      FROM sales s WHERE s.is_returned = 0
+      GROUP BY month ORDER BY month DESC LIMIT 12
+    `).all();
+
+    const monthlyITC = db.prepare(`
+      SELECT strftime('%Y-%m', pur.purchase_date) AS month, ROUND(SUM(pur.gst_total), 2) AS itc
+      FROM purchases pur WHERE pur.purchase_date IS NOT NULL
+      GROUP BY month ORDER BY month DESC LIMIT 12
+    `).all();
+
+    // Compute summary totals
+    const outputTax = outputRows.reduce((sum, r) => sum + (r.taxable_value * r.gst_rate / 100), 0);
+    const itcTotal = itcRows.reduce((sum, r) => sum + (r.gst_amount || 0), 0);
+    const taxableValue = outputRows.reduce((sum, r) => sum + (r.taxable_value || 0), 0);
+
+    res.json({
+      outputRows,
+      itcRows,
+      monthlyOutput: monthlyOutput.reverse(),
+      monthlyITC: monthlyITC.reverse(),
+      summary: {
+        outputTax: Math.round(outputTax * 100) / 100,
+        itcTotal: Math.round(itcTotal * 100) / 100,
+        netPayable: Math.round((outputTax - itcTotal) * 100) / 100,
+        taxableValue: Math.round(taxableValue * 100) / 100,
+      },
+    });
+  } catch (error) {
+    console.error('[gst-report]', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Distinct prescriber names for autocomplete (most-used first)
+app.get('/api/sales/prescribers', (req, res) => {
+  const { q } = req.query;
+  try {
+    let sql = `
+      SELECT prescriber_name AS name, COUNT(*) AS uses
+      FROM sales
+      WHERE prescriber_name IS NOT NULL AND trim(prescriber_name) != ''
+    `;
+    const params = [];
+    if (q && q.trim()) {
+      sql += ` AND prescriber_name LIKE ?`;
+      params.push(`%${q.trim()}%`);
+    }
+    sql += ` GROUP BY LOWER(TRIM(prescriber_name)) ORDER BY uses DESC LIMIT 20`;
+    const rows = db.prepare(sql).all(...params);
+    res.json(rows.map(r => r.name));
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
 app.post('/api/sales', (req, res) => {
   const { subtotal, gst_total, discount_total, total_amount, user_id, customer_id, prescriber_name, payment_status, payment_details, items } = req.body;
   if (!user_id || !items || items.length === 0) return res.status(400).json({ error: 'Invalid sale data' });
@@ -887,7 +1265,7 @@ app.post('/api/purchases', (req, res) => {
         const packSize = prod ? (prod.pack_size || 1) : 1;
         const newSellingPrice = item.selling_price || item.price || item.mrp || 0;
         stmts.insertPurchaseItem.run(purchaseId, item.product_id, item.batch, item.expiry, item.quantity, item.purchase_price, item.mrp || 0, item.gst || 0);
-        stmts.addStock.run(item.quantity * packSize, item.batch, item.expiry, item.mrp || 0, item.purchase_price, newSellingPrice, item.product_id);
+        stmts.addStock.run(item.quantity * packSize, item.batch, item.expiry, item.mrp || 0, item.purchase_price, newSellingPrice, item.discount || 0, item.product_id);
       }
       return purchaseId;
     });
@@ -925,7 +1303,7 @@ app.put('/api/purchases/:id', (req, res) => {
         const packSize = prod ? (prod.pack_size || 1) : 1;
         const newSellingPrice = item.selling_price || item.price || item.mrp || 0;
         stmts.insertPurchaseItem.run(req.params.id, item.product_id, item.batch, item.expiry, item.quantity, item.purchase_price, item.mrp || 0, item.gst || 0);
-        stmts.addStock.run(item.quantity * packSize, item.batch, item.expiry, item.mrp || 0, item.purchase_price, newSellingPrice, item.product_id);
+        stmts.addStock.run(item.quantity * packSize, item.batch, item.expiry, item.mrp || 0, item.purchase_price, newSellingPrice, item.discount || 0, item.product_id);
       }
       return req.params.id;
     });
@@ -1061,76 +1439,6 @@ app.post('/api/settings/logo', uploadLogo.single('logo'), (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// ─── Users (management) ──────────────────────────────────────────────────────
-// ─── Login Log (must be BEFORE :id routes) ──────────────────────────────────
-app.get('/api/users/login-log', (req, res) => {
-  try {
-    const limit = Number(req.query.limit) || 100;
-    const logs = db.prepare('SELECT * FROM login_logs ORDER BY created_at DESC LIMIT ?').all(limit);
-    res.json(logs);
-  } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-app.get('/api/users', (req, res) => {
-  try {
-    const users = db.prepare('SELECT id, username, role, permissions, is_active FROM users ORDER BY id ASC').all();
-    res.json(users);
-  } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-app.post('/api/users', (req, res) => {
-  const { username, password, role, permissions } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-  try {
-    const hashed = hashPassword(password);
-    const defaultPerms = JSON.stringify({ can_give_discount: true, can_edit_bill: false, can_delete_bill: false, can_access_reports: false });
-    const result = db.prepare('INSERT INTO users (username, password, role, permissions, is_active) VALUES (?, ?, ?, ?, 1)').run(
-      username.trim(), hashed, role || 'staff', permissions || defaultPerms
-    );
-    res.json({ id: result.lastInsertRowid, username: username.trim(), role: role || 'staff' });
-  } catch (error) {
-    if (error.message.includes('UNIQUE')) return res.status(409).json({ error: 'Username already exists' });
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.put('/api/users/:id', (req, res) => {
-  const { id } = req.params;
-  const { username, role, permissions, is_active } = req.body;
-  try {
-    db.prepare('UPDATE users SET username = ?, role = ?, permissions = ?, is_active = ? WHERE id = ?').run(
-      username, role, permissions ? JSON.stringify(permissions) : null, is_active != null ? is_active : 1, id
-    );
-    res.json({ success: true });
-  } catch (error) {
-    if (error.message.includes('UNIQUE')) return res.status(409).json({ error: 'Username already exists' });
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.put('/api/users/:id/password', (req, res) => {
-  const { id } = req.params;
-  const { password } = req.body;
-  if (!password || password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
-  try {
-    const hashed = hashPassword(password);
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashed, id);
-    res.json({ success: true });
-  } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-app.delete('/api/users/:id', (req, res) => {
-  const { id } = req.params;
-  const { requesterId } = req.body;
-  if (String(id) === String(requesterId)) return res.status(400).json({ error: 'Cannot delete your own account' });
-  try {
-    // Soft delete — preserve audit trail
-    db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(id);
-    res.json({ success: true });
-  } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-// (login-log route moved above :id routes)
 
 // ─── Bill Number ─────────────────────────────────────────────────────────────
 app.get('/api/settings/next-bill-no', (req, res) => {
@@ -1520,6 +1828,275 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
+// ─── ATTENDANCE MODULE ───────────────────────────────────────────────────────
+
+// Helper: compute status from work minutes and check-in time
+function computeStatus(checkInISO, workMinutes) {
+  if (!checkInISO) return 'absent';
+  const checkIn = new Date(checkInISO);
+  const hour = checkIn.getHours();
+  const minute = checkIn.getMinutes();
+  const lateThreshold = 10 * 60 + 15; // 10:15 AM in minutes
+  const totalMinutes = hour * 60 + minute;
+  const isLate = totalMinutes > lateThreshold;
+  if (workMinutes >= 360) return isLate ? 'late' : 'present'; // >= 6h
+  if (workMinutes >= 180) return 'half_day'; // >= 3h
+  return 'absent';
+}
+
+// Helper: upsert attendance_record from a punch
+function processPunch(staffId, punchTime) {
+  const date = punchTime.split('T')[0] || punchTime.substring(0, 10);
+  const existing = db.prepare('SELECT * FROM attendance_records WHERE staff_id = ? AND date = ?').get(staffId, date);
+  if (!existing) {
+    db.prepare(`INSERT INTO attendance_records (staff_id, date, check_in, status) VALUES (?, ?, ?, 'present')`).run(staffId, date, punchTime);
+  } else if (!existing.check_out) {
+    const checkInTime = new Date(existing.check_in).getTime();
+    const checkOutTime = new Date(punchTime).getTime();
+    const workMinutes = Math.max(0, Math.round((checkOutTime - checkInTime) / 60000));
+    const status = computeStatus(existing.check_in, workMinutes);
+    db.prepare('UPDATE attendance_records SET check_out = ?, work_minutes = ?, status = ? WHERE staff_id = ? AND date = ?')
+      .run(punchTime, workMinutes, status, staffId, date);
+  }
+  // Additional punches beyond check-out are ignored (only first in + first out matter)
+}
+
+// ── Staff CRUD ───────────────────────────────────────────────────────────────
+app.get('/api/attendance/staff', (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const staff = db.prepare(`
+      SELECT s.*,
+        u.username,
+        ar.check_in, ar.check_out, ar.work_minutes, ar.status AS today_status
+      FROM staff s
+      LEFT JOIN users u ON s.user_id = u.id
+      LEFT JOIN attendance_records ar ON ar.staff_id = s.id AND ar.date = ?
+      WHERE s.is_active = 1
+      ORDER BY s.name ASC
+    `).all(today);
+    res.json(staff);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/attendance/staff', (req, res) => {
+  const { name, phone, designation, shift, biometric_id, joining_date, monthly_salary, user_id } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  try {
+    const result = db.prepare(
+      'INSERT INTO staff (name, phone, designation, shift, biometric_id, joining_date, monthly_salary, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(name, phone || null, designation || null, shift || 'general', biometric_id || null, joining_date || null, monthly_salary || 0, user_id || null);
+    res.json({ id: result.lastInsertRowid, ...req.body });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.put('/api/attendance/staff/:id', (req, res) => {
+  const { name, phone, designation, shift, biometric_id, joining_date, monthly_salary, user_id, is_active } = req.body;
+  const { id } = req.params;
+  try {
+    db.prepare(
+      'UPDATE staff SET name=?, phone=?, designation=?, shift=?, biometric_id=?, joining_date=?, monthly_salary=?, user_id=?, is_active=? WHERE id=?'
+    ).run(name, phone || null, designation || null, shift || 'general', biometric_id || null, joining_date || null, monthly_salary || 0, user_id || null, is_active ?? 1, id);
+    res.json({ id: Number(id), ...req.body });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/attendance/staff/:id', (req, res) => {
+  const { id } = req.params;
+  try {
+    db.prepare('UPDATE staff SET is_active = 0 WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Punch (manual override) ──────────────────────────────────────────────────
+app.post('/api/attendance/punch', (req, res) => {
+  try {
+    const { staff_id, punch_time } = req.body;
+    if (!staff_id) return res.status(400).json({ error: 'staff_id required' });
+    const pt = punch_time || new Date().toISOString();
+    const staff = db.prepare('SELECT * FROM staff WHERE id = ?').get(staff_id);
+    if (!staff) return res.status(404).json({ error: 'Staff not found' });
+    db.prepare('INSERT INTO attendance_punches (staff_id, biometric_id, punch_time, punch_type) VALUES (?, ?, ?, ?)')
+      .run(staff_id, staff.biometric_id, pt, 'manual');
+    processPunch(staff_id, pt);
+    const date = pt.split('T')[0];
+    const record = db.prepare('SELECT * FROM attendance_records WHERE staff_id = ? AND date = ?').get(staff_id, date);
+    res.json({ success: true, record });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Daily Records ────────────────────────────────────────────────────────────
+app.get('/api/attendance/records', (req, res) => {
+  try {
+    const { date, staff_id, date_from, date_to } = req.query;
+    let where = '1=1';
+    const params = [];
+    if (date) { where += ' AND ar.date = ?'; params.push(date); }
+    if (date_from) { where += ' AND ar.date >= ?'; params.push(date_from); }
+    if (date_to) { where += ' AND ar.date <= ?'; params.push(date_to); }
+    if (staff_id) { where += ' AND ar.staff_id = ?'; params.push(staff_id); }
+    const records = db.prepare(`
+      SELECT ar.*, s.name AS staff_name, s.designation, s.shift
+      FROM attendance_records ar
+      JOIN staff s ON ar.staff_id = s.id
+      WHERE ${where}
+      ORDER BY ar.date DESC, s.name ASC
+    `).all(...params);
+    res.json(records);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Monthly Summary ──────────────────────────────────────────────────────────
+app.get('/api/attendance/report/monthly', (req, res) => {
+  try {
+    const { month, year } = req.query; // e.g. month=6 year=2026
+    const y = year || new Date().getFullYear();
+    const m = String(month || new Date().getMonth() + 1).padStart(2, '0');
+    const prefix = `${y}-${m}`;
+    const summary = db.prepare(`
+      SELECT
+        s.id AS staff_id, s.name, s.designation, s.shift, s.monthly_salary,
+        COUNT(CASE WHEN ar.status IN ('present','late') THEN 1 END) AS days_present,
+        COUNT(CASE WHEN ar.status = 'absent' THEN 1 END) AS days_absent,
+        COUNT(CASE WHEN ar.status = 'half_day' THEN 1 END) AS days_half,
+        COUNT(CASE WHEN ar.status = 'late' THEN 1 END) AS days_late,
+        ROUND(SUM(ar.work_minutes) / 60.0, 1) AS total_hours,
+        ROUND(AVG(CASE WHEN ar.work_minutes > 0 THEN ar.work_minutes END) / 60.0, 1) AS avg_hours,
+        (SELECT COUNT(*) FROM leave_requests lr WHERE lr.staff_id = s.id AND lr.status = 'approved'
+          AND lr.from_date LIKE ?) AS approved_leaves
+      FROM staff s
+      LEFT JOIN attendance_records ar ON ar.staff_id = s.id AND ar.date LIKE ?
+      WHERE s.is_active = 1
+      GROUP BY s.id
+      ORDER BY s.name ASC
+    `).all(`${prefix}%`, `${prefix}%`);
+    res.json(summary);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Today's Summary (for dashboard) ─────────────────────────────────────────
+app.get('/api/attendance/today', (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const totalStaff = db.prepare('SELECT COUNT(*) AS cnt FROM staff WHERE is_active = 1').get().cnt;
+    const present = db.prepare(`SELECT COUNT(*) AS cnt FROM attendance_records WHERE date = ? AND status IN ('present','late')`).get(today).cnt;
+    const halfDay = db.prepare(`SELECT COUNT(*) AS cnt FROM attendance_records WHERE date = ? AND status = 'half_day'`).get(today).cnt;
+    const late = db.prepare(`SELECT COUNT(*) AS cnt FROM attendance_records WHERE date = ? AND status = 'late'`).get(today).cnt;
+    const onLeave = db.prepare(`SELECT COUNT(*) AS cnt FROM leave_requests WHERE status = 'approved' AND from_date <= ? AND to_date >= ?`).get(today, today).cnt;
+    res.json({ totalStaff, present, halfDay, late, absent: totalStaff - present - halfDay - onLeave, onLeave, date: today });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Recent Punches ────────────────────────────────────────────────────────────
+app.get('/api/attendance/punches', (req, res) => {
+  try {
+    const { date } = req.query;
+    const d = date || new Date().toISOString().split('T')[0];
+    const punches = db.prepare(`
+      SELECT ap.*, s.name AS staff_name
+      FROM attendance_punches ap
+      JOIN staff s ON ap.staff_id = s.id
+      WHERE DATE(ap.punch_time) = ?
+      ORDER BY ap.punch_time DESC
+      LIMIT 50
+    `).all(d);
+    res.json(punches);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Notes / Status override ───────────────────────────────────────────────────
+app.put('/api/attendance/records/:id', (req, res) => {
+  const { notes, status } = req.body;
+  const { id } = req.params;
+  try {
+    db.prepare('UPDATE attendance_records SET notes = ?, status = ? WHERE id = ?').run(notes, status, id);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Leave Requests ────────────────────────────────────────────────────────────
+app.get('/api/attendance/leaves', (req, res) => {
+  try {
+    const { status, staff_id } = req.query;
+    let where = '1=1';
+    const params = [];
+    if (status) { where += ' AND lr.status = ?'; params.push(status); }
+    if (staff_id) { where += ' AND lr.staff_id = ?'; params.push(staff_id); }
+    const leaves = db.prepare(`
+      SELECT lr.*, s.name AS staff_name
+      FROM leave_requests lr
+      JOIN staff s ON lr.staff_id = s.id
+      WHERE ${where}
+      ORDER BY lr.created_at DESC
+    `).all(...params);
+    res.json(leaves);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/attendance/leaves', (req, res) => {
+  const { staff_id, from_date, to_date, reason } = req.body;
+  if (!staff_id || !from_date || !to_date) return res.status(400).json({ error: 'staff_id, from_date, to_date required' });
+  try {
+    const result = db.prepare('INSERT INTO leave_requests (staff_id, from_date, to_date, reason) VALUES (?, ?, ?, ?)').run(staff_id, from_date, to_date, reason || null);
+    res.json({ id: result.lastInsertRowid, ...req.body, status: 'pending' });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.put('/api/attendance/leaves/:id', (req, res) => {
+  const { status, approved_by } = req.body;
+  const { id } = req.params;
+  if (!['approved', 'rejected', 'pending'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  try {
+    db.prepare('UPDATE leave_requests SET status = ?, approved_by = ? WHERE id = ?').run(status, approved_by || null, id);
+    // If approved, mark attendance records as 'leave' for those days
+    if (status === 'approved') {
+      const leave = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(id);
+      if (leave) {
+        const start = new Date(leave.from_date);
+        const end = new Date(leave.to_date);
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const dateStr = d.toISOString().split('T')[0];
+          db.prepare(`INSERT INTO attendance_records (staff_id, date, status) VALUES (?, ?, 'leave')
+            ON CONFLICT(staff_id, date) DO UPDATE SET status = 'leave'`).run(leave.staff_id, dateStr);
+        }
+      }
+    }
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ── Device Test Connection (TCP ping) ────────────────────────────────────────
+app.post('/api/attendance/device/test', (req, res) => {
+  const { ip, port } = req.body;
+  if (!ip) return res.status(400).json({ error: 'IP required' });
+  const net = require('net');
+  const socket = new net.Socket();
+  const timeout = 3000;
+  let responded = false;
+  socket.setTimeout(timeout);
+  socket.connect(Number(port) || 4370, ip, () => {
+    if (responded) return;
+    responded = true;
+    socket.destroy();
+    res.json({ success: true, message: `Connected to ${ip}:${port}` });
+  });
+  socket.on('error', (err) => {
+    if (responded) return;
+    responded = true;
+    socket.destroy();
+    res.status(502).json({ error: err.message });
+  });
+  socket.on('timeout', () => {
+    if (responded) return;
+    responded = true;
+    socket.destroy();
+    res.status(504).json({ error: 'Connection timed out' });
+  });
+});
+
+// ─── END ATTENDANCE MODULE ────────────────────────────────────────────────────
+
 app.listen(PORT, '0.0.0.0', () => {
   const { networkInterfaces } = require('os');
   const nets = networkInterfaces();
@@ -1539,3 +2116,5 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 
 module.exports = app;
+
+
